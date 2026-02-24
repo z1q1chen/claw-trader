@@ -1,0 +1,17 @@
+{
+  "skills": {
+    "entries": {
+      "polyclaw": {
+        "enabled": true,
+        "env": {
+          "CHAINSTACK_NODE": "${CHAINSTACK_NODE}",
+          "POLYCLAW_PRIVATE_KEY": "${POLYCLAW_PRIVATE_KEY}",
+          "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+        }
+      }
+    }
+  },
+  "cron": {
+    "enabled": true
+  }
+}

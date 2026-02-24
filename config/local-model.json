@@ -1,0 +1,36 @@
+{
+  "models": {
+    "mode": "merge",
+    "providers": [
+      {
+        "name": "local",
+        "type": "openai-compatible",
+        "baseUrl": "${LOCAL_MODEL_URL:-http://127.0.0.1:1234/v1}",
+        "models": ["${LOCAL_MODEL_NAME:-llama-3.1-8b}"],
+        "priority": 1
+      },
+      {
+        "name": "openrouter",
+        "type": "openrouter",
+        "apiKey": "${OPENROUTER_API_KEY}",
+        "models": ["anthropic/claude-sonnet-4"],
+        "priority": 2
+      }
+    ]
+  },
+  "skills": {
+    "entries": {
+      "polyclaw": {
+        "enabled": true,
+        "env": {
+          "CHAINSTACK_NODE": "${CHAINSTACK_NODE}",
+          "POLYCLAW_PRIVATE_KEY": "${POLYCLAW_PRIVATE_KEY}",
+          "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+        }
+      }
+    }
+  },
+  "cron": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "jobs": [
+    {
+      "name": "market-scan",
+      "description": "Scan trending Polymarket markets and execute trades on opportunities",
+      "schedule_type": "interval",
+      "every": "${SCAN_INTERVAL_MINUTES:-30}m",
+      "session": "isolated",
+      "strategy_file": "strategies/scan-and-trade.md",
+      "announce": true
+    },
+    {
+      "name": "position-check",
+      "description": "Review open positions, P&L, and close positions if needed",
+      "schedule_type": "interval",
+      "every": "2h",
+      "session": "isolated",
+      "strategy_file": "strategies/position-check.md",
+      "announce": true
+    },
+    {
+      "name": "hedge-discovery",
+      "description": "Run LLM-powered hedge analysis across markets",
+      "schedule_type": "interval",
+      "every": "6h",
+      "session": "isolated",
+      "strategy_file": "strategies/hedge-discovery.md",
+      "announce": true
+    }
+  ]
+}
