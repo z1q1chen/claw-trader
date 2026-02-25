@@ -1,0 +1,35 @@
+[project]
+name = "claw-trader"
+version = "0.1.0"
+description = "Autonomous quant trading agent with LLM-driven decision making"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "websockets>=14.0",
+    "google-genai>=1.0.0",
+    "openai>=1.60.0",
+    "ib_insync>=0.9.86",
+    "web3>=7.0.0",
+    "pandas>=2.2.0",
+    "numpy>=2.0.0",
+    "ta>=0.11.0",
+    "scipy>=1.14.0",
+    "aiosqlite>=0.20.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "httpx>=0.28.0",
+    "python-dotenv>=1.0.0",
+    "apscheduler>=3.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
