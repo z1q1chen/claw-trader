@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from abc import ABC, abstractmethod
@@ -9,6 +10,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.database import log_api_usage
 from app.core.events import Event, event_bus
+from app.core.logging import logger
 
 
 @dataclass
@@ -53,13 +55,17 @@ class GeminiProvider(LLMProvider):
         client = await self._get_client()
         start = time.monotonic()
 
-        response = client.models.generate_content(
-            model=self.model,
-            contents=user_prompt,
-            config={
-                "system_instruction": system_prompt,
-                "response_mime_type": "application/json",
-            },
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model=self.model,
+                contents=user_prompt,
+                config={
+                    "system_instruction": system_prompt,
+                    "response_mime_type": "application/json",
+                },
+            ),
         )
 
         latency = (time.monotonic() - start) * 1000
@@ -152,6 +158,8 @@ class LLMBrain:
         self._provider: LLMProvider | None = None
         self._provider_name: str = ""
         self._model_name: str = ""
+        self._last_call_time: float = 0
+        self._min_call_interval_s: float = 2.0
 
     def configure(self, provider: str, model: str, api_key: str, base_url: str | None = None) -> None:
         self._provider_name = provider
@@ -168,8 +176,13 @@ class LLMBrain:
 
     async def decide(self, signal_event: Event) -> TradeAction | None:
         if self._provider is None:
-            print("LLM Brain: No provider configured, skipping")
+            logger.warning("LLM Brain: No provider configured, skipping")
             return None
+
+        now = time.monotonic()
+        if now - self._last_call_time < self._min_call_interval_s:
+            return None
+        self._last_call_time = now
 
         data = signal_event.data
         user_prompt = (
@@ -217,7 +230,7 @@ class LLMBrain:
                 strategy="llm_signal_response",
             )
         except Exception as e:
-            print(f"LLM Brain error: {e}")
+            logger.error(f"LLM Brain error: {e}")
             return None
 
     def _estimate_cost(self, response: LLMResponse) -> float:

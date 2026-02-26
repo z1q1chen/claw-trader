@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from app.core.config import settings
+from app.core.logging import logger
 from app.engines.execution_engine import BrokerAdapter, OrderResult
 
 
@@ -29,7 +30,7 @@ class IBKRAdapter(BrokerAdapter):
             ),
         )
         self._connected = True
-        print(f"IBKR connected: {settings.ibkr_host}:{settings.ibkr_port}")
+        logger.info(f"IBKR connected: {settings.ibkr_host}:{settings.ibkr_port}")
 
     async def disconnect(self) -> None:
         if self._ib and self._connected:

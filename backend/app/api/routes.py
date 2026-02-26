@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import DB_PATH
-from app.core.events import event_bus
+from app.core.events import Event, event_bus
 
 router = APIRouter()
 
@@ -63,9 +63,7 @@ async def update_llm_config(req: LLMConfigRequest):
         await db.commit()
 
     # Reconfigure the brain (will be wired in main.py)
-    await event_bus.publish(
-        type("Event", (), {"type": "llm_config_changed", "data": req.model_dump(), "timestamp": ""})()
-    )
+    await event_bus.publish(Event(type="llm_config_changed", data=req.model_dump()))
     return {"status": "ok"}
 
 
@@ -192,9 +190,7 @@ async def update_risk_config(req: RiskConfigRequest):
 
 @router.post("/api/risk/killswitch")
 async def toggle_kill_switch(req: KillSwitchRequest):
-    await event_bus.publish(
-        type("Event", (), {"type": "kill_switch_toggle", "data": {"active": req.active}, "timestamp": ""})()
-    )
+    await event_bus.publish(Event(type="kill_switch_toggle", data={"active": req.active}))
     return {"status": "ok", "active": req.active}
 
 

@@ -8,6 +8,7 @@ import numpy as np
 
 from app.core.config import settings
 from app.core.events import Event, event_bus
+from app.core.logging import logger
 from app.engines.llm_brain import TradeAction
 
 
@@ -62,11 +63,11 @@ class RiskEngine:
 
     def activate_kill_switch(self, reason: str) -> None:
         self._kill_switch = True
-        print(f"KILL SWITCH ACTIVATED: {reason}")
+        logger.critical(f"KILL SWITCH ACTIVATED: {reason}")
 
     def deactivate_kill_switch(self) -> None:
         self._kill_switch = False
-        print("Kill switch deactivated")
+        logger.warning("Kill switch deactivated")
 
     def update_portfolio(self, positions: dict[str, float], daily_pnl: float) -> None:
         self._portfolio.positions = positions
@@ -92,24 +93,24 @@ class RiskEngine:
             )
 
         trade_value = action.quantity * current_price
+        adjusted_quantity = None
 
+        # Adjust quantity if exceeding single trade limit
         if trade_value > settings.max_single_trade_usd:
-            max_qty = settings.max_single_trade_usd / current_price
-            return RiskCheckResult(
-                passed=True,
-                adjusted_quantity=max_qty,
-                rejection_reason=f"Trade size ${trade_value:.0f} exceeds max ${settings.max_single_trade_usd:.0f}. Adjusted to {max_qty:.2f} shares.",
-            )
+            adjusted_quantity = settings.max_single_trade_usd / current_price
+            trade_value = settings.max_single_trade_usd
 
+        # Check position concentration (20% max per symbol)
         current_symbol_exposure = abs(self._portfolio.positions.get(action.symbol, 0))
         new_exposure = current_symbol_exposure + trade_value
-        max_per_position = settings.max_portfolio_exposure_usd * 0.2  # 20% max per symbol
+        max_per_position = settings.max_portfolio_exposure_usd * 0.2
         if new_exposure > max_per_position:
             return RiskCheckResult(
                 passed=False,
                 rejection_reason=f"Position in {action.symbol} would reach ${new_exposure:.0f}, exceeding 20% concentration limit of ${max_per_position:.0f}",
             )
 
+        # Check total portfolio exposure
         new_total_exposure = self._portfolio.total_exposure_usd + trade_value
         if new_total_exposure > settings.max_portfolio_exposure_usd:
             return RiskCheckResult(
@@ -117,6 +118,7 @@ class RiskEngine:
                 rejection_reason=f"Total exposure would reach ${new_total_exposure:.0f}, exceeding limit of ${settings.max_portfolio_exposure_usd:.0f}",
             )
 
+        # Check daily loss limit
         if self._portfolio.daily_pnl_usd < -settings.max_daily_loss_usd:
             self.activate_kill_switch(
                 f"Daily loss ${abs(self._portfolio.daily_pnl_usd):.0f} exceeds limit ${settings.max_daily_loss_usd:.0f}"
@@ -126,6 +128,7 @@ class RiskEngine:
                 rejection_reason="Daily loss limit breached. Kill switch activated.",
             )
 
+        # Check max drawdown
         if self._portfolio.max_drawdown_pct > settings.max_drawdown_pct:
             self.activate_kill_switch(
                 f"Max drawdown {self._portfolio.max_drawdown_pct:.1f}% exceeds limit {settings.max_drawdown_pct}%"
@@ -139,8 +142,10 @@ class RiskEngine:
 
         return RiskCheckResult(
             passed=True,
+            adjusted_quantity=adjusted_quantity,
             exposure_after=new_total_exposure,
             var_95=var_95,
+            rejection_reason=f"Trade size adjusted to {adjusted_quantity:.2f} shares." if adjusted_quantity else None,
         )
 
     def _calculate_var(self, confidence: float = 0.95) -> float:

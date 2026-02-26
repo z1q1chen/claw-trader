@@ -9,6 +9,7 @@ import numpy as np
 
 from app.core.config import settings
 from app.core.events import Event, event_bus
+from app.core.logging import logger
 
 
 @dataclass
@@ -64,13 +65,26 @@ class TechnicalIndicators:
         return ema_val
 
     @staticmethod
+    def _ema_series(closes: np.ndarray, period: int) -> np.ndarray:
+        if len(closes) < period:
+            return closes.copy()
+        multiplier = 2.0 / (period + 1)
+        ema = np.empty(len(closes) - period + 1)
+        ema[0] = float(np.mean(closes[:period]))
+        for i, price in enumerate(closes[period:], 1):
+            ema[i] = (price - ema[i-1]) * multiplier + ema[i-1]
+        return ema
+
+    @staticmethod
     def macd(closes: np.ndarray) -> tuple[float, float, float]:
-        ema12 = TechnicalIndicators.ema(closes, 12)
-        ema26 = TechnicalIndicators.ema(closes, 26)
-        macd_line = ema12 - ema26
-        signal_line = TechnicalIndicators.ema(
-            np.array([ema12 - ema26]), 9
-        )
+        if len(closes) < 26:
+            return 0.0, 0.0, 0.0
+        ema12_series = TechnicalIndicators._ema_series(closes, 12)
+        ema26_series = TechnicalIndicators._ema_series(closes, 26)
+        # Align to shorter series (ema26 starts later)
+        macd_line_series = ema12_series[-len(ema26_series):] - ema26_series
+        signal_line = TechnicalIndicators.ema(macd_line_series, 9)
+        macd_line = float(macd_line_series[-1])
         histogram = macd_line - signal_line
         return macd_line, signal_line, histogram
 
@@ -105,6 +119,8 @@ class SignalEngine:
         self._volume_history: dict[str, list[float]] = {}
         self._running = False
         self._max_history = 200
+        self._last_signal_time: dict[str, float] = {}  # "symbol:signal_type" -> timestamp
+        self._signal_cooldown_s: float = 60.0
 
     def update_price(self, symbol: str, price: float, volume: float) -> list[Signal]:
         closes = self._price_history.setdefault(symbol, [])
@@ -121,6 +137,15 @@ class SignalEngine:
 
         return self._detect_signals(symbol, np.array(closes), np.array(volumes))
 
+    def _should_emit(self, symbol: str, signal_type: str) -> bool:
+        key = f"{symbol}:{signal_type}"
+        now = time.monotonic()
+        last = self._last_signal_time.get(key, 0)
+        if now - last < self._signal_cooldown_s:
+            return False
+        self._last_signal_time[key] = now
+        return True
+
     def _detect_signals(
         self, symbol: str, closes: np.ndarray, volumes: np.ndarray
     ) -> list[Signal]:
@@ -132,38 +157,45 @@ class SignalEngine:
 
         rsi = ti.rsi(closes)
         if rsi < 30:
-            signals.append(Signal(symbol, "rsi_oversold", rsi, {"threshold": 30}))
+            if self._should_emit(symbol, "rsi_oversold"):
+                signals.append(Signal(symbol, "rsi_oversold", rsi, {"threshold": 30}))
         elif rsi > 70:
-            signals.append(Signal(symbol, "rsi_overbought", rsi, {"threshold": 70}))
+            if self._should_emit(symbol, "rsi_overbought"):
+                signals.append(Signal(symbol, "rsi_overbought", rsi, {"threshold": 70}))
 
         macd_line, signal_line, histogram = ti.macd(closes)
         if len(closes) > 26:
             if macd_line > signal_line and histogram > 0:
-                signals.append(Signal(symbol, "macd_bullish", macd_line, {
-                    "signal_line": signal_line, "histogram": histogram
-                }))
+                if self._should_emit(symbol, "macd_bullish"):
+                    signals.append(Signal(symbol, "macd_bullish", macd_line, {
+                        "signal_line": signal_line, "histogram": histogram
+                    }))
             elif macd_line < signal_line and histogram < 0:
-                signals.append(Signal(symbol, "macd_bearish", macd_line, {
-                    "signal_line": signal_line, "histogram": histogram
-                }))
+                if self._should_emit(symbol, "macd_bearish"):
+                    signals.append(Signal(symbol, "macd_bearish", macd_line, {
+                        "signal_line": signal_line, "histogram": histogram
+                    }))
 
         if len(volumes) >= 20:
             vol_avg = ti.volume_sma(volumes, 20)
             if vol_avg > 0 and volumes[-1] > vol_avg * 2.0:
-                signals.append(Signal(symbol, "volume_spike", float(volumes[-1]), {
-                    "avg_volume": vol_avg, "ratio": float(volumes[-1] / vol_avg)
-                }))
+                if self._should_emit(symbol, "volume_spike"):
+                    signals.append(Signal(symbol, "volume_spike", float(volumes[-1]), {
+                        "avg_volume": vol_avg, "ratio": float(volumes[-1] / vol_avg)
+                    }))
 
         upper, middle, lower = ti.bollinger_bands(closes)
         current = float(closes[-1])
         if current <= lower:
-            signals.append(Signal(symbol, "bb_lower_touch", current, {
-                "lower": lower, "middle": middle, "upper": upper
-            }))
+            if self._should_emit(symbol, "bb_lower_touch"):
+                signals.append(Signal(symbol, "bb_lower_touch", current, {
+                    "lower": lower, "middle": middle, "upper": upper
+                }))
         elif current >= upper:
-            signals.append(Signal(symbol, "bb_upper_touch", current, {
-                "upper": upper, "middle": middle, "lower": lower
-            }))
+            if self._should_emit(symbol, "bb_upper_touch"):
+                signals.append(Signal(symbol, "bb_upper_touch", current, {
+                    "upper": upper, "middle": middle, "lower": lower
+                }))
 
         return signals
 
@@ -190,7 +222,7 @@ class SignalEngine:
                             }
                         ))
             except Exception as e:
-                print(f"Signal engine error: {e}")
+                logger.error(f"Signal engine error: {e}")
 
             elapsed = time.monotonic() - start
             sleep_time = max(0, interval_s - elapsed)

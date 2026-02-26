@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.events import Event, event_bus
+from app.core.logging import setup_logging, logger
 from app.engines.signal_engine import SignalEngine
 from app.engines.llm_brain import LLMBrain
 from app.engines.risk_engine import RiskEngine
@@ -61,7 +62,7 @@ async def handle_llm_config_changed(event: Event) -> None:
         api_key=data["api_key"],
         base_url=data.get("base_url"),
     )
-    print(f"LLM Brain reconfigured: {data['provider']}/{data['model_name']}")
+    logger.info(f"LLM Brain reconfigured: {data['provider']}/{data['model_name']}")
 
 
 async def handle_kill_switch(event: Event) -> None:
@@ -73,6 +74,7 @@ async def handle_kill_switch(event: Event) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     await init_db()
 
     # Configure LLM brain with defaults
@@ -90,8 +92,8 @@ async def lifespan(app: FastAPI):
     feed = DummyPriceFeed(settings.price_feed_symbols)
     signal_task = asyncio.create_task(signal_engine.run(feed))
 
-    print(f"Claw Trader started. Monitoring: {settings.price_feed_symbols}")
-    print(f"Signal scan interval: {settings.signal_scan_interval_ms}ms")
+    logger.info(f"Claw Trader started. Monitoring: {settings.price_feed_symbols}")
+    logger.info(f"Signal scan interval: {settings.signal_scan_interval_ms}ms")
 
     yield
 

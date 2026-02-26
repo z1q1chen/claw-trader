@@ -6,6 +6,8 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
+from app.core.logging import logger
+
 
 @dataclass
 class Event:
@@ -39,7 +41,7 @@ class EventBus:
             try:
                 await handler(event)
             except Exception as e:
-                print(f"Event handler error for {event.type}: {e}")
+                logger.error(f"Event handler error for {event.type}: {e}")
 
         msg = json.dumps(asdict(event))
         dead_clients = []

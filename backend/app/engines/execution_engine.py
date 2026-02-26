@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.database import log_order, log_trade_decision
 from app.core.events import Event, event_bus
+from app.core.logging import logger
 from app.engines.llm_brain import TradeAction
 from app.engines.risk_engine import RiskCheckResult, RiskEngine
 
@@ -68,7 +69,7 @@ class ExecutionEngine:
     ) -> OrderResult | None:
         broker_name = broker_name or self._default_broker
         if broker_name is None or broker_name not in self._brokers:
-            print(f"Execution engine: No broker '{broker_name}' registered")
+            logger.warning(f"Execution engine: No broker '{broker_name}' registered")
             return None
 
         risk_result = self._risk_engine.check_trade(action, current_price)
