@@ -19,6 +19,9 @@ from app.core.database import (
     count_signals,
     count_api_usage,
     count_risk_snapshots,
+    save_performance_metrics,
+    get_performance_history,
+    get_trade_pnl_data,
 )
 from app.core.events import Event, event_bus
 from app.core.logging import logger
@@ -621,6 +624,81 @@ async def update_signal_cooldown(req: CooldownConfigRequest):
     signal_engine._signal_cooldown_s = req.cooldown_s
     settings.signal_cooldown_s = req.cooldown_s
     return {"status": "ok", "cooldown_s": req.cooldown_s}
+
+
+@router.get("/api/config/dry-run")
+async def get_dry_run_status():
+    return {"enabled": settings.dry_run_mode}
+
+
+@router.get("/api/config/signal")
+async def get_signal_config():
+    from app.main import signal_engine
+    cfg = signal_engine.signal_config
+    return {
+        "rsi_period": cfg.rsi_period,
+        "rsi_oversold": cfg.rsi_oversold,
+        "rsi_overbought": cfg.rsi_overbought,
+        "macd_fast": cfg.macd_fast,
+        "macd_slow": cfg.macd_slow,
+        "macd_signal": cfg.macd_signal,
+        "volume_spike_ratio": cfg.volume_spike_ratio,
+        "bb_period": cfg.bb_period,
+        "bb_std_dev": cfg.bb_std_dev,
+    }
+
+
+@router.post("/api/config/signal")
+async def update_signal_config(req: dict):
+    from app.main import signal_engine
+    from app.engines.signal_engine import SignalConfig
+    cfg = signal_engine.signal_config
+    # Update only provided fields
+    for key in ("rsi_period", "rsi_oversold", "rsi_overbought", "macd_fast", "macd_slow", "macd_signal", "volume_spike_ratio", "bb_period", "bb_std_dev"):
+        if key in req:
+            setattr(cfg, key, type(getattr(cfg, key))(req[key]))
+    return {"status": "ok"}
+
+
+# --- Performance ---
+
+@router.get("/api/performance/metrics")
+async def get_performance_metrics(days: int = 30):
+    """Get historical performance metrics."""
+    history = await get_performance_history(days)
+    return {"data": history, "period_days": days}
+
+
+@router.get("/api/performance/summary")
+async def get_performance_summary():
+    """Calculate current performance summary from trade data."""
+    trades = await get_trade_pnl_data()
+    if not trades:
+        return {
+            "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+            "win_rate": 0, "total_pnl": 0, "avg_win": 0, "avg_loss": 0,
+            "profit_factor": 0, "sharpe_ratio": 0,
+        }
+
+    wins = [t for t in trades if (t.get("filled_price", 0) or 0) > 0 and t.get("side") == "SELL"]
+    losses = [t for t in trades if (t.get("filled_price", 0) or 0) > 0 and t.get("side") == "BUY"]
+
+    total_pnl = sum((t.get("filled_price", 0) or 0) * (t.get("filled_quantity", 0) or 0) * (1 if t.get("side") == "SELL" else -1) for t in trades)
+
+    winning_count = len(wins)
+    losing_count = len(losses)
+    total = len(trades)
+    win_rate = winning_count / total * 100 if total > 0 else 0
+
+    return {
+        "total_trades": total,
+        "winning_trades": winning_count,
+        "losing_trades": losing_count,
+        "win_rate": round(win_rate, 1),
+        "total_pnl": round(total_pnl, 2),
+        "profit_factor": 0,
+        "sharpe_ratio": 0,
+    }
 
 
 # --- System ---

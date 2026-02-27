@@ -22,6 +22,23 @@ DB_PATH = _get_db_path()
 
 MIGRATIONS = [
     (1, "Initial schema", None),
+    (2, "Add performance_metrics table", """
+    CREATE TABLE IF NOT EXISTS performance_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        total_trades INTEGER DEFAULT 0,
+        winning_trades INTEGER DEFAULT 0,
+        losing_trades INTEGER DEFAULT 0,
+        total_pnl REAL DEFAULT 0,
+        avg_win REAL DEFAULT 0,
+        avg_loss REAL DEFAULT 0,
+        win_rate REAL DEFAULT 0,
+        profit_factor REAL DEFAULT 0,
+        sharpe_ratio REAL DEFAULT 0,
+        max_drawdown_pct REAL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+    )
+"""),
 ]
 
 
@@ -440,5 +457,44 @@ async def get_stale_orders(max_age_seconds: int = 30) -> list[dict]:
         rows = await (await db.execute(
             "SELECT * FROM orders WHERE status IN ('pending', 'submitted') AND created_at < datetime('now', ?)",
             (f'-{max_age_seconds} seconds',)
+        )).fetchall()
+        return [dict(row) for row in rows]
+
+
+async def save_performance_metrics(metrics: dict) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO performance_metrics
+            (date, total_trades, winning_trades, losing_trades, total_pnl,
+             avg_win, avg_loss, win_rate, profit_factor, sharpe_ratio, max_drawdown_pct)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (metrics["date"], metrics["total_trades"], metrics["winning_trades"],
+             metrics["losing_trades"], metrics["total_pnl"], metrics["avg_win"],
+             metrics["avg_loss"], metrics["win_rate"], metrics["profit_factor"],
+             metrics["sharpe_ratio"], metrics["max_drawdown_pct"]),
+        )
+        await db.commit()
+
+
+async def get_performance_history(days: int = 30) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT * FROM performance_metrics WHERE date >= date('now', ?) ORDER BY date DESC",
+            (f'-{days} days',)
+        )).fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_trade_pnl_data() -> list[dict]:
+    """Get all filled orders with their P&L for performance calculation."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """SELECT o.*, d.confidence, d.reasoning
+               FROM orders o
+               LEFT JOIN trade_decisions d ON o.decision_id = d.id
+               WHERE o.status = 'filled'
+               ORDER BY o.created_at"""
         )).fetchall()
         return [dict(row) for row in rows]

@@ -13,6 +13,7 @@ import type {
   Signal,
   BrokersResponse,
   PolymarketMarket,
+  PerformanceSummary,
 } from "@/lib/types";
 
 interface EventLogEntry {
@@ -80,10 +81,20 @@ export default function Dashboard() {
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
+  const [performanceSummary, setPerformanceSummary] = useState<PerformanceSummary>({
+    total_trades: 0,
+    winning_trades: 0,
+    losing_trades: 0,
+    win_rate: 0,
+    total_pnl: 0,
+    profit_factor: 0,
+    sharpe_ratio: 0,
+  });
+  const [dryRunMode, setDryRunMode] = useState(false);
 
   const refreshData = useCallback(async () => {
     try {
-      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st] = await Promise.all([
+      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun] = await Promise.all([
         api.getHealth().catch(() => ({ status: "error" })),
         api.getLLMConfig().catch(() => null),
         api.getUsageSummary().catch(() => []),
@@ -95,6 +106,8 @@ export default function Dashboard() {
         api.getSignals(50).catch(() => []),
         api.listBrokers().catch(() => ({ brokers: [], default: null })),
         api.getStats().catch(() => ({})),
+        api.getPerformanceSummary().catch(() => null),
+        api.getDryRunStatus().catch(() => ({ enabled: false })),
       ]);
 
       setHealth(h.status === "ok" ? "connected" : "error");
@@ -108,6 +121,8 @@ export default function Dashboard() {
       setSignals(sig);
       setBrokers(brok);
       setStats(st);
+      if (perf) setPerformanceSummary(perf);
+      setDryRunMode(dryRun.enabled);
       setKillSwitch(!!risk.kill_switch_active);
     } catch {
       setHealth("error");
@@ -269,6 +284,18 @@ export default function Dashboard() {
 
   return (
     <>
+      {dryRunMode && (
+        <div style={{
+          background: '#f59e0b',
+          color: '#000',
+          textAlign: 'center',
+          padding: '8px',
+          fontWeight: 'bold',
+          fontSize: '14px',
+        }}>
+          DRY RUN MODE - Simulated trades only, no real money at risk
+        </div>
+      )}
       <div className="header">
         <h1>Claw Trader</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -518,6 +545,64 @@ export default function Dashboard() {
               <span className="stat-label">Realized P&L</span>
             </div>
           </div>
+        </div>
+
+        {/* Performance */}
+        <div className="card">
+          <h2>Performance</h2>
+          <div className="stat-row">
+            <div className="stat">
+              <span className="stat-value">{performanceSummary.total_trades}</span>
+              <span className="stat-label">Total Trades</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{performanceSummary.win_rate.toFixed(1)}%</span>
+              <span className="stat-label">Win Rate</span>
+            </div>
+            <div className="stat">
+              <span className={`stat-value ${performanceSummary.total_pnl >= 0 ? "pnl-positive" : "pnl-negative"}`}>
+                ${performanceSummary.total_pnl.toFixed(2)}
+              </span>
+              <span className="stat-label">Total P&L</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{performanceSummary.profit_factor.toFixed(2)}</span>
+              <span className="stat-label">Profit Factor</span>
+            </div>
+          </div>
+          <div className="stat-row" style={{ marginTop: 8 }}>
+            <div className="stat">
+              <span className="stat-value">{performanceSummary.winning_trades}</span>
+              <span className="stat-label">Winning Trades</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{performanceSummary.losing_trades}</span>
+              <span className="stat-label">Losing Trades</span>
+            </div>
+          </div>
+          {performanceSummary.total_trades > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", height: 24, borderRadius: 4, overflow: "hidden", background: "var(--bg-secondary)" }}>
+                <div
+                  style={{
+                    flex: performanceSummary.winning_trades,
+                    background: "#22c55e",
+                    minWidth: performanceSummary.winning_trades > 0 ? 4 : 0,
+                  }}
+                />
+                <div
+                  style={{
+                    flex: performanceSummary.losing_trades,
+                    background: "#ef4444",
+                    minWidth: performanceSummary.losing_trades > 0 ? 4 : 0,
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, textAlign: "center" }}>
+                Win/Loss Distribution
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Risk Configuration */}

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_rpm: int = 120  # requests per minute per IP
 
+    # Dry-run mode
+    dry_run_mode: bool = True  # Default to dry-run for safety
+
     model_config = {"env_file": ".env", "env_prefix": "CT_"}
 
 

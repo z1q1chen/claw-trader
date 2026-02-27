@@ -115,3 +115,13 @@ export interface PolymarketMarket {
   active?: boolean;
   conditionId?: string;
 }
+
+export interface PerformanceSummary {
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  total_pnl: number;
+  profit_factor: number;
+  sharpe_ratio: number;
+}

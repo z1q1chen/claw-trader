@@ -427,3 +427,84 @@ class TestWebSocketBidirectional:
                     pass
             except Exception:
                 pass
+
+
+class TestPerformanceEndpoints:
+    def test_get_performance_summary_empty(self, client):
+        """Test performance summary endpoint with no trades."""
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_trades:
+            mock_trades.return_value = []
+            resp = client.get("/api/performance/summary")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total_trades"] == 0
+            assert data["winning_trades"] == 0
+            assert data["losing_trades"] == 0
+            assert data["win_rate"] == 0
+            assert data["total_pnl"] == 0
+            assert "profit_factor" in data
+            assert "sharpe_ratio" in data
+
+    def test_get_performance_summary_with_trades(self, client):
+        """Test performance summary endpoint with trade data."""
+        mock_trades = [
+            {"filled_price": 100, "filled_quantity": 10, "side": "BUY"},
+            {"filled_price": 102, "filled_quantity": 10, "side": "SELL"},
+        ]
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_trades
+            resp = client.get("/api/performance/summary")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total_trades"] == 2
+            assert "winning_trades" in data
+            assert "losing_trades" in data
+            assert "win_rate" in data
+            assert "total_pnl" in data
+
+    def test_get_performance_history_empty(self, client):
+        """Test performance history endpoint with no data."""
+        with patch("app.api.routes.get_performance_history", new_callable=AsyncMock) as mock_hist:
+            mock_hist.return_value = []
+            resp = client.get("/api/performance/metrics?days=30")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["data"] == []
+            assert data["period_days"] == 30
+
+    def test_get_performance_history_with_data(self, client):
+        """Test performance history endpoint with data."""
+        mock_data = [
+            {
+                "id": 1,
+                "date": "2024-01-01",
+                "total_trades": 5,
+                "winning_trades": 3,
+                "losing_trades": 2,
+                "total_pnl": 150.0,
+                "avg_win": 75.0,
+                "avg_loss": -25.0,
+                "win_rate": 60.0,
+                "profit_factor": 3.0,
+                "sharpe_ratio": 1.5,
+                "max_drawdown_pct": 5.0,
+            }
+        ]
+        with patch("app.api.routes.get_performance_history", new_callable=AsyncMock) as mock_hist:
+            mock_hist.return_value = mock_data
+            resp = client.get("/api/performance/metrics?days=30")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data["data"]) == 1
+            assert data["data"][0]["total_trades"] == 5
+            assert data["data"][0]["win_rate"] == 60.0
+
+
+class TestDryRunEndpoint:
+    def test_get_dry_run_status_enabled(self, client):
+        """Test dry-run status endpoint when enabled."""
+        resp = client.get("/api/config/dry-run")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "enabled" in data
+        assert isinstance(data["enabled"], bool)

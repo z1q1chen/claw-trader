@@ -14,6 +14,19 @@ from app.core.logging import logger
 
 
 @dataclass
+class SignalConfig:
+    rsi_period: int = 14
+    rsi_oversold: float = 30.0
+    rsi_overbought: float = 70.0
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    volume_spike_ratio: float = 2.0
+    bb_period: int = 20
+    bb_std_dev: float = 2.0
+
+
+@dataclass
 class PriceBar:
     symbol: str
     timestamp: float
@@ -123,6 +136,12 @@ class SignalEngine:
         self._max_history = 200
         self._last_signal_time: dict[str, float] = {}  # "symbol:signal_type" -> timestamp
         self._signal_cooldown_s: float = settings.signal_cooldown_s
+        self.signal_config = SignalConfig()
+
+    def configure(self, config: SignalConfig) -> None:
+        """Update signal detection configuration."""
+        self.signal_config = config
+        logger.info(f"Signal engine configured: {config}")
 
     def update_price(self, symbol: str, price: float, volume: float) -> list[Signal]:
         closes = self._price_history.setdefault(symbol, [])
@@ -156,17 +175,18 @@ class SignalEngine:
             return signals
 
         ti = TechnicalIndicators
+        cfg = self.signal_config
 
-        rsi = ti.rsi(closes)
-        if rsi < 30:
+        rsi = ti.rsi(closes, period=cfg.rsi_period)
+        if rsi < cfg.rsi_oversold:
             if self._should_emit(symbol, "rsi_oversold"):
-                signals.append(Signal(symbol, "rsi_oversold", rsi, {"threshold": 30}))
-        elif rsi > 70:
+                signals.append(Signal(symbol, "rsi_oversold", rsi, {"threshold": cfg.rsi_oversold}))
+        elif rsi > cfg.rsi_overbought:
             if self._should_emit(symbol, "rsi_overbought"):
-                signals.append(Signal(symbol, "rsi_overbought", rsi, {"threshold": 70}))
+                signals.append(Signal(symbol, "rsi_overbought", rsi, {"threshold": cfg.rsi_overbought}))
 
         macd_line, signal_line, histogram = ti.macd(closes)
-        if len(closes) > 26:
+        if len(closes) > cfg.macd_slow:
             if math.isfinite(macd_line) and math.isfinite(signal_line) and math.isfinite(histogram):
                 if macd_line > signal_line and histogram > 0:
                     if self._should_emit(symbol, "macd_bullish"):
@@ -179,10 +199,10 @@ class SignalEngine:
                             "signal_line": signal_line, "histogram": histogram
                         }))
 
-        if len(volumes) >= 20:
-            vol_avg = ti.volume_sma(volumes, 20)
+        if len(volumes) >= cfg.bb_period:
+            vol_avg = ti.volume_sma(volumes, cfg.bb_period)
             current_vol = float(volumes[-1])
-            if vol_avg > 0 and math.isfinite(current_vol) and current_vol > vol_avg * 2.0:
+            if vol_avg > 0 and math.isfinite(current_vol) and current_vol > vol_avg * cfg.volume_spike_ratio:
                 ratio = current_vol / vol_avg if vol_avg > 0 else 0.0
                 if math.isfinite(ratio) and ratio > 0:
                     if self._should_emit(symbol, "volume_spike"):
@@ -190,7 +210,7 @@ class SignalEngine:
                             "avg_volume": vol_avg, "ratio": ratio
                         }))
 
-        upper, middle, lower = ti.bollinger_bands(closes)
+        upper, middle, lower = ti.bollinger_bands(closes, period=cfg.bb_period, std_dev=cfg.bb_std_dev)
         current = float(closes[-1])
         if current <= lower:
             if self._should_emit(symbol, "bb_lower_touch"):

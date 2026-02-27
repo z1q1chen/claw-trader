@@ -214,6 +214,13 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("kill_switch_toggle", handle_kill_switch)
     event_bus.subscribe("signal", handle_signal_log)
 
+    # Register dry-run broker if enabled
+    if settings.dry_run_mode:
+        from app.brokers.dryrun import DryRunBrokerAdapter
+        dryrun = DryRunBrokerAdapter()
+        execution_engine.register_broker("dryrun", dryrun, default=True)
+        logger.info("DRY RUN MODE: Using simulated broker (no real trades)")
+
     # Auto-connect Polymarket if API key is configured
     if settings.polymarket_api_key:
         from app.brokers.polymarket import PolymarketAdapter

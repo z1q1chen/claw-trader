@@ -293,8 +293,7 @@ async def test_run_migrations_idempotent(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should only have one entry for version 1, not duplicates
-    assert result[0] == 1
+    assert result[0] == 2
 
 
 @pytest.mark.asyncio
@@ -305,4 +304,98 @@ async def test_run_migrations_tracks_version(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
         result = await cursor.fetchone()
-    assert result[0] == 1
+    assert result[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_performance_metrics_table_created(temp_db):
+    """Test that performance_metrics table is created by migration."""
+    from app.core.database import run_migrations
+    await run_migrations()
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='performance_metrics'"
+        )
+        result = await cursor.fetchone()
+    assert result is not None
+    assert result[0] == "performance_metrics"
+
+
+@pytest.mark.asyncio
+async def test_save_performance_metrics(temp_db):
+    """Test saving performance metrics."""
+    from app.core.database import save_performance_metrics, run_migrations
+    from datetime import datetime
+    await run_migrations()
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    metrics = {
+        "date": today,
+        "total_trades": 10,
+        "winning_trades": 7,
+        "losing_trades": 3,
+        "total_pnl": 250.50,
+        "avg_win": 50.0,
+        "avg_loss": -25.0,
+        "win_rate": 70.0,
+        "profit_factor": 2.8,
+        "sharpe_ratio": 1.2,
+        "max_drawdown_pct": 5.0,
+    }
+
+    await save_performance_metrics(metrics)
+
+    async with aiosqlite.connect(temp_db) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM performance_metrics WHERE date = ?", (today,))
+        result = await cursor.fetchone()
+
+    assert result is not None
+    assert result["total_trades"] == 10
+    assert result["winning_trades"] == 7
+    assert result["total_pnl"] == 250.50
+
+
+@pytest.mark.asyncio
+async def test_get_performance_history(temp_db):
+    """Test retrieving performance history."""
+    from app.core.database import save_performance_metrics, get_performance_history, run_migrations
+    from datetime import datetime
+    await run_migrations()
+
+    metrics = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "total_trades": 5,
+        "winning_trades": 3,
+        "losing_trades": 2,
+        "total_pnl": 100.0,
+        "avg_win": 40.0,
+        "avg_loss": -20.0,
+        "win_rate": 60.0,
+        "profit_factor": 2.0,
+        "sharpe_ratio": 1.0,
+        "max_drawdown_pct": 3.0,
+    }
+
+    await save_performance_metrics(metrics)
+    history = await get_performance_history(30)
+
+    assert len(history) > 0
+    assert history[0]["total_trades"] == 5
+    assert history[0]["win_rate"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_get_trade_pnl_data(temp_db):
+    """Test retrieving trade P&L data."""
+    from app.core.database import get_trade_pnl_data, run_migrations, init_db, log_order, update_order_status
+    await init_db()
+
+    order_id = await log_order("test_broker", "AAPL", "BUY", "MARKET", 10.0)
+    await update_order_status(order_id, "filled", filled_price=100.0, filled_quantity=10.0)
+
+    trades = await get_trade_pnl_data()
+
+    assert len(trades) > 0
+    assert trades[0]["symbol"] == "AAPL"
+    assert trades[0]["status"] == "filled"

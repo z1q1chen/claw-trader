@@ -10,6 +10,7 @@ import {
   Signal,
   BrokersResponse,
   PolymarketMarket,
+  PerformanceSummary,
 } from "./types";
 
 const API_BASE = "/api";
@@ -128,6 +129,14 @@ export const api = {
 
   // Stats
   getStats: () => fetchJSON<Record<string, unknown>>("/stats"),
+
+  // Performance
+  getPerformanceSummary: () => fetchJSON<PerformanceSummary>("/performance/summary"),
+  getPerformanceMetrics: (days = 30) =>
+    fetchJSON<{ data: unknown[]; period_days: number }>(`/performance/metrics?days=${days}`),
+
+  // Dry-run status
+  getDryRunStatus: () => fetchJSON<{ enabled: boolean }>("/config/dry-run"),
 };
 
 export function createWebSocket(

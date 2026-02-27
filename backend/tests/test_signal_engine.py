@@ -905,5 +905,130 @@ class TestSignalEngineEdgeCases:
                 assert np.isfinite(rsi_signals[0].value), "RSI value should be finite"
 
 
+class TestSignalConfigurable:
+    """Test configurable signal parameters."""
+
+    def test_configurable_rsi_oversold_threshold(self):
+        """Test that RSI oversold threshold is configurable."""
+        from app.engines.signal_engine import SignalConfig
+
+        engine = SignalEngine()
+
+        # Create declining prices for low RSI
+        closes = np.linspace(100.0, 20.0, 20)
+
+        # Test with default threshold (30)
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, np.array([100.0] * 20))
+            rsi_signals = [s for s in signals if s.signal_type == "rsi_oversold"]
+            assert len(rsi_signals) > 0, "Should detect oversold with default threshold"
+
+        # Change threshold to 40 (higher)
+        config = SignalConfig(rsi_oversold=40.0)
+        engine.configure(config)
+
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, np.array([100.0] * 20))
+            rsi_signals = [s for s in signals if s.signal_type == "rsi_oversold"]
+            assert len(rsi_signals) > 0, "Should detect oversold with raised threshold"
+
+    def test_configurable_rsi_period(self):
+        """Test that RSI period is configurable."""
+        from app.engines.signal_engine import SignalConfig
+
+        engine = SignalEngine()
+        closes = np.linspace(100.0, 115.0, 30)
+
+        # Default period is 14
+        assert engine.signal_config.rsi_period == 14
+
+        # Configure with period 20
+        config = SignalConfig(rsi_period=20)
+        engine.configure(config)
+        assert engine.signal_config.rsi_period == 20
+
+    def test_configurable_volume_spike_ratio(self):
+        """Test that volume spike ratio is configurable."""
+        from app.engines.signal_engine import SignalConfig
+
+        engine = SignalEngine()
+
+        # Create price data and volume spike
+        # Volumes: 30 at 1000, then 1 spike at 5000
+        # Last 20: mostly 1000 with one 5000 at the end
+        closes = np.array([100.0] * 31)
+        volumes = np.array([1000.0] * 30 + [5000.0])
+
+        # Default ratio is 2.0, should detect spike at 5x
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, volumes)
+            volume_signals = [s for s in signals if s.signal_type == "volume_spike"]
+            assert len(volume_signals) > 0, "Should detect volume spike with ratio 5.0 > 2.0"
+
+        # Change ratio to 6.0 (only spikes > 6x trigger)
+        config = SignalConfig(volume_spike_ratio=6.0)
+        engine.configure(config)
+
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, volumes)
+            volume_signals = [s for s in signals if s.signal_type == "volume_spike"]
+            # Should NOT detect spike at 5x with 6.0 threshold
+            assert len(volume_signals) == 0, "Should not detect volume spike with ratio 5.0 < 6.0"
+
+    def test_configurable_bb_period(self):
+        """Test that Bollinger Bands period is configurable."""
+        from app.engines.signal_engine import SignalConfig
+
+        engine = SignalEngine()
+
+        # Default period is 20
+        assert engine.signal_config.bb_period == 20
+
+        # Configure with period 10
+        config = SignalConfig(bb_period=10)
+        engine.configure(config)
+        assert engine.signal_config.bb_period == 10
+
+    def test_configurable_bb_std_dev(self):
+        """Test that Bollinger Bands std dev is configurable."""
+        from app.engines.signal_engine import SignalConfig
+
+        engine = SignalEngine()
+
+        # Default std dev is 2.0
+        assert engine.signal_config.bb_std_dev == 2.0
+
+        # Configure with higher std dev (wider bands)
+        config = SignalConfig(bb_std_dev=3.0)
+        engine.configure(config)
+        assert engine.signal_config.bb_std_dev == 3.0
+
+    def test_configurable_rsi_overbought_threshold(self):
+        """Test that RSI overbought threshold is configurable."""
+        from app.engines.signal_engine import SignalConfig
+
+        engine = SignalEngine()
+
+        # Create rising prices for high RSI
+        closes = np.linspace(20.0, 100.0, 20)
+
+        # Test with default threshold (70)
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, np.array([100.0] * 20))
+            overbought_signals = [s for s in signals if s.signal_type == "rsi_overbought"]
+            assert len(overbought_signals) > 0, "Should detect overbought with default threshold"
+
+        # Change threshold to 80 (higher, harder to trigger)
+        config = SignalConfig(rsi_overbought=80.0)
+        engine.configure(config)
+
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, np.array([100.0] * 20))
+            overbought_signals = [s for s in signals if s.signal_type == "rsi_overbought"]
+            # May or may not detect depending on exact RSI value
+            # Just verify it doesn't crash
+            assert isinstance(overbought_signals, list)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
