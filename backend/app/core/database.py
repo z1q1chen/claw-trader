@@ -40,6 +40,23 @@ MIGRATIONS = [
     )
 """),
     (3, "Add expires_at to orders", "ALTER TABLE orders ADD COLUMN expires_at TEXT"),
+    (4, "Add trade_journal table", """
+    CREATE TABLE IF NOT EXISTS trade_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_id INTEGER,
+        order_id INTEGER,
+        event_type TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT,
+        quantity REAL,
+        price REAL,
+        status TEXT,
+        details TEXT DEFAULT '{}',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (decision_id) REFERENCES trade_decisions(id),
+        FOREIGN KEY (order_id) REFERENCES orders(id)
+    )
+"""),
 ]
 
 
@@ -510,3 +527,52 @@ async def get_expired_orders() -> list[dict]:
             "SELECT * FROM orders WHERE status IN ('pending', 'submitted') AND expires_at IS NOT NULL AND expires_at < datetime('now')"
         )).fetchall()
         return [dict(row) for row in rows]
+
+
+async def log_journal_entry(
+    event_type: str,
+    symbol: str,
+    side: str | None = None,
+    quantity: float | None = None,
+    price: float | None = None,
+    status: str | None = None,
+    decision_id: int | None = None,
+    order_id: int | None = None,
+    details: dict | None = None,
+) -> int:
+    """Log a journal entry for trade audit trail."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO trade_journal (decision_id, order_id, event_type, symbol, side, quantity, price, status, details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (decision_id, order_id, event_type, symbol, side, quantity, price, status, json.dumps(details or {})),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_trade_journal(limit: int = 100, offset: int = 0, symbol: str | None = None) -> list[dict]:
+    """Get trade journal entries with optional symbol filter."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if symbol:
+            rows = await (await db.execute(
+                "SELECT * FROM trade_journal WHERE symbol = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (symbol, limit, offset),
+            )).fetchall()
+        else:
+            rows = await (await db.execute(
+                "SELECT * FROM trade_journal ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )).fetchall()
+        return [dict(row) for row in rows]
+
+
+async def count_journal_entries(symbol: str | None = None) -> int:
+    """Count journal entries with optional symbol filter."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if symbol:
+            row = await (await db.execute("SELECT COUNT(*) FROM trade_journal WHERE symbol = ?", (symbol,))).fetchone()
+        else:
+            row = await (await db.execute("SELECT COUNT(*) FROM trade_journal")).fetchone()
+        return row[0]

@@ -147,3 +147,32 @@ export interface PositionSizingConfig {
   kelly_avg_loss: number;
   max_position_pct: number;
 }
+
+export interface WebhookConfig {
+  id: string;
+  url: string;
+  event_types: string[];
+  enabled: boolean;
+}
+
+export interface JournalEntry {
+  id: number;
+  decision_id: number | null;
+  order_id: number | null;
+  event_type: string;
+  symbol: string;
+  side: string | null;
+  quantity: number | null;
+  price: number | null;
+  status: string | null;
+  details: string;
+  created_at: string;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}

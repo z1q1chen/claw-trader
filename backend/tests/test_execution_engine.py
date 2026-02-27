@@ -143,6 +143,9 @@ async def test_execute_trade_risk_check_fails() -> None:
         new_callable=AsyncMock,
         return_value=1,
     ) as mock_log_decision, patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
+    ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
     ) as mock_publish:
@@ -195,6 +198,9 @@ async def test_execute_trade_happy_path_success() -> None:
         "app.engines.execution_engine.log_order",
         new_callable=AsyncMock,
         return_value=100,
+    ), patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
@@ -261,6 +267,9 @@ async def test_execute_trade_uses_adjusted_quantity() -> None:
         new_callable=AsyncMock,
         return_value=100,
     ) as mock_log_order, patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
+    ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
     ), patch(
@@ -317,6 +326,9 @@ async def test_execute_trade_broker_returns_failure() -> None:
         "app.engines.execution_engine.log_order",
         new_callable=AsyncMock,
         return_value=100,
+    ), patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
@@ -496,6 +508,9 @@ async def test_execute_trade_logs_decision_with_correct_params() -> None:
         new_callable=AsyncMock,
         return_value=100,
     ), patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
+    ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
     ), patch(
@@ -549,6 +564,9 @@ async def test_execute_trade_logs_order_with_correct_params() -> None:
         new_callable=AsyncMock,
         return_value=100,
     ) as mock_log_order, patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
+    ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
     ), patch(
@@ -606,6 +624,9 @@ async def test_execute_trade_publishes_correct_event_data() -> None:
         "app.engines.execution_engine.log_order",
         new_callable=AsyncMock,
         return_value=200,
+    ), patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
@@ -669,6 +690,9 @@ async def test_execute_trade_retries_on_transient_failure() -> None:
         "app.engines.execution_engine.log_order",
         new_callable=AsyncMock,
         return_value=100,
+    ), patch(
+        "app.engines.execution_engine.log_journal_entry",
+        new_callable=AsyncMock,
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,

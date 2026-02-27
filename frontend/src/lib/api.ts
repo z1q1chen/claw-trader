@@ -13,6 +13,9 @@ import {
   PerformanceSummary,
   SignalConfig,
   PositionSizingConfig,
+  WebhookConfig,
+  JournalEntry,
+  PaginatedResponse,
 } from "./types";
 
 const API_BASE = "/api";
@@ -165,6 +168,22 @@ export const api = {
     fetchJSON<{ status: string; preset: string }>(`/presets/${presetName}/apply`, {
       method: "POST",
     }),
+
+  // Webhooks
+  getWebhooks: () => fetchJSON<WebhookConfig[]>("/webhooks"),
+  createWebhook: (url: string, eventTypes: string[]) =>
+    fetchJSON<{ id: string; status: string }>("/webhooks", {
+      method: "POST",
+      body: JSON.stringify({ url, event_types: eventTypes }),
+    }),
+  deleteWebhook: (id: string) =>
+    fetchJSON<{ status: string }>(`/webhooks/${id}`, { method: "DELETE" }),
+  testWebhook: (id: string) =>
+    fetchJSON<{ status: string }>(`/webhooks/${id}/test`, { method: "POST" }),
+
+  // Trade Journal
+  getTradeJournal: (limit = 50, offset = 0) =>
+    fetchJSON<PaginatedResponse<JournalEntry>>(`/journal?limit=${limit}&offset=${offset}`),
 };
 
 export function createWebSocket(

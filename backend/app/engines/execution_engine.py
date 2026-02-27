@@ -5,7 +5,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.database import log_order, log_trade_decision, update_order_status, mark_decision_executed
+from app.core.database import (
+    log_order,
+    log_trade_decision,
+    update_order_status,
+    mark_decision_executed,
+    log_journal_entry,
+)
 import datetime
 from app.core.events import Event, event_bus
 from app.core.logging import logger
@@ -107,6 +113,17 @@ class ExecutionEngine:
                 risk_rejection_reason=risk_result.rejection_reason,
             )
 
+            await log_journal_entry(
+                event_type="risk_check",
+                symbol=action.symbol,
+                side=action.side,
+                quantity=quantity,
+                price=current_price,
+                status="passed" if risk_result.passed else "rejected",
+                decision_id=decision_id,
+                details={"rejection_reason": risk_result.rejection_reason} if not risk_result.passed else {},
+            )
+
             if not risk_result.passed:
                 await event_bus.publish(Event(
                     type="trade_rejected",
@@ -158,6 +175,18 @@ class ExecutionEngine:
                     order_type=action.order_type,
                     limit_price=action.limit_price,
                 )
+
+            await log_journal_entry(
+                event_type="order_executed" if result.success else "order_failed",
+                symbol=action.symbol,
+                side=action.side,
+                quantity=quantity,
+                price=result.filled_price or current_price,
+                status="filled" if result.success else "failed",
+                decision_id=decision_id,
+                order_id=order_id,
+                details={"broker_order_id": result.broker_order_id, "error": result.error},
+            )
 
             if result.success:
                 await update_order_status(

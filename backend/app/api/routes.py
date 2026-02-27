@@ -25,6 +25,8 @@ from app.core.database import (
     save_performance_metrics,
     get_performance_history,
     get_trade_pnl_data,
+    get_trade_journal,
+    count_journal_entries,
 )
 from app.core.events import Event, event_bus
 from app.core.logging import logger
@@ -361,6 +363,13 @@ async def get_recent_signals(limit: int = 100, offset: int = 0):
     total = await count_signals()
     data = [dict(r) for r in rows]
     return paginated_response(data, total, limit, offset)
+
+
+@router.get("/api/journal")
+async def get_journal(limit: int = 50, offset: int = 0, symbol: str | None = None):
+    entries = await get_trade_journal(limit, offset, symbol)
+    total = await count_journal_entries(symbol)
+    return paginated_response(entries, total, limit, offset)
 
 
 # --- WebSocket for real-time updates ---
@@ -769,7 +778,7 @@ async def get_performance_summary():
         return {
             "total_trades": 0, "matched_trades": 0, "winning_trades": 0, "losing_trades": 0,
             "win_rate": 0, "total_pnl": 0, "avg_win": 0, "avg_loss": 0,
-            "profit_factor": 0,
+            "profit_factor": 0, "sharpe_ratio": 0,
         }
 
     total = len(trades)
@@ -802,6 +811,14 @@ async def get_performance_summary():
     avg_loss = sum(losses) / losing_count if losing_count > 0 else 0
     profit_factor = abs(sum(wins) / sum(losses)) if losses and sum(losses) != 0 else 0
 
+    # Calculate Sharpe ratio from realized P&L data
+    sharpe_ratio = 0
+    if realized_pnls and len(realized_pnls) > 1:
+        import statistics
+        mean_return = statistics.mean(realized_pnls)
+        std_return = statistics.stdev(realized_pnls)
+        sharpe_ratio = (mean_return / std_return) * (252 ** 0.5) if std_return > 0 else 0
+
     return {
         "total_trades": total,
         "matched_trades": matched,
@@ -812,6 +829,7 @@ async def get_performance_summary():
         "avg_win": round(avg_win, 2),
         "avg_loss": round(avg_loss, 2),
         "profit_factor": round(profit_factor, 2),
+        "sharpe_ratio": round(sharpe_ratio, 2),
     }
 
 

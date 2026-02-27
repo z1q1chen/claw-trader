@@ -293,8 +293,8 @@ async def test_run_migrations_idempotent(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should have 3 migrations total (v1, v2, v3)
-    assert result[0] == 3
+    # Should have 4 migrations total (v1, v2, v3, v4)
+    assert result[0] == 4
 
 
 @pytest.mark.asyncio
@@ -305,8 +305,8 @@ async def test_run_migrations_tracks_version(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should track v1, v2, v3
-    assert result[0] == 3
+    # Should track v1, v2, v3, v4
+    assert result[0] == 4
 
 
 @pytest.mark.asyncio
@@ -489,3 +489,191 @@ async def test_migration_adds_expires_at_column(temp_db):
 
     column_names = [col[1] for col in columns]
     assert "expires_at" in column_names
+
+
+# ============================================================================
+# Trade Journal Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_log_journal_entry_creates_entry(temp_db):
+    """Test that log_journal_entry creates a journal entry."""
+    from app.core.database import log_journal_entry
+    import json
+
+    entry_id = await log_journal_entry(
+        event_type="risk_check",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.0,
+        status="passed",
+        decision_id=1,
+        details={"test": "data"},
+    )
+
+    assert entry_id >= 1
+
+    async with aiosqlite.connect(temp_db) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM trade_journal WHERE id = ?", (entry_id,))
+        row = await cursor.fetchone()
+
+    assert row is not None
+    entry = dict(row)
+    assert entry["event_type"] == "risk_check"
+    assert entry["symbol"] == "AAPL"
+    assert entry["side"] == "BUY"
+    assert entry["quantity"] == 10.0
+    assert entry["price"] == 150.0
+    assert entry["status"] == "passed"
+    assert entry["decision_id"] == 1
+    assert json.loads(entry["details"]) == {"test": "data"}
+
+
+@pytest.mark.asyncio
+async def test_get_trade_journal_returns_entries_ordered(temp_db):
+    """Test that get_trade_journal returns entries."""
+    from app.core.database import log_journal_entry, get_trade_journal
+
+    entry1 = await log_journal_entry(
+        event_type="risk_check",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.0,
+        status="passed",
+        decision_id=1,
+    )
+
+    entry2 = await log_journal_entry(
+        event_type="order_executed",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.5,
+        status="filled",
+        decision_id=1,
+        order_id=1,
+    )
+
+    entries = await get_trade_journal(limit=10, offset=0)
+
+    assert len(entries) >= 2
+    entry_ids = {e["id"] for e in entries}
+    assert entry1 in entry_ids
+    assert entry2 in entry_ids
+
+
+@pytest.mark.asyncio
+async def test_count_journal_entries(temp_db):
+    """Test that count_journal_entries returns correct count."""
+    from app.core.database import log_journal_entry, count_journal_entries
+
+    await log_journal_entry(
+        event_type="risk_check",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.0,
+        status="passed",
+        decision_id=1,
+    )
+
+    await log_journal_entry(
+        event_type="order_executed",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.5,
+        status="filled",
+        decision_id=1,
+        order_id=1,
+    )
+
+    total = await count_journal_entries()
+    assert total == 2
+
+
+@pytest.mark.asyncio
+async def test_get_trade_journal_with_symbol_filter(temp_db):
+    """Test that get_trade_journal filters by symbol correctly."""
+    from app.core.database import log_journal_entry, get_trade_journal
+
+    await log_journal_entry(
+        event_type="risk_check",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.0,
+        status="passed",
+        decision_id=1,
+    )
+
+    await log_journal_entry(
+        event_type="risk_check",
+        symbol="MSFT",
+        side="SELL",
+        quantity=5.0,
+        price=300.0,
+        status="passed",
+        decision_id=2,
+    )
+
+    aapl_entries = await get_trade_journal(limit=10, offset=0, symbol="AAPL")
+    msft_entries = await get_trade_journal(limit=10, offset=0, symbol="MSFT")
+
+    assert len(aapl_entries) == 1
+    assert aapl_entries[0]["symbol"] == "AAPL"
+
+    assert len(msft_entries) == 1
+    assert msft_entries[0]["symbol"] == "MSFT"
+
+
+@pytest.mark.asyncio
+async def test_count_journal_entries_with_symbol_filter(temp_db):
+    """Test that count_journal_entries filters by symbol correctly."""
+    from app.core.database import log_journal_entry, count_journal_entries
+
+    await log_journal_entry(
+        event_type="risk_check",
+        symbol="AAPL",
+        side="BUY",
+        quantity=10.0,
+        price=150.0,
+        status="passed",
+        decision_id=1,
+    )
+
+    await log_journal_entry(
+        event_type="risk_check",
+        symbol="MSFT",
+        side="SELL",
+        quantity=5.0,
+        price=300.0,
+        status="passed",
+        decision_id=2,
+    )
+
+    aapl_count = await count_journal_entries(symbol="AAPL")
+    msft_count = await count_journal_entries(symbol="MSFT")
+
+    assert aapl_count == 1
+    assert msft_count == 1
+
+
+@pytest.mark.asyncio
+async def test_migration_4_creates_trade_journal_table(temp_db):
+    """Test that migration 4 creates trade_journal table."""
+    from app.core.database import run_migrations
+    await run_migrations()
+
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_journal'"
+        )
+        result = await cursor.fetchone()
+
+    assert result is not None
+    assert result[0] == "trade_journal"

@@ -16,6 +16,8 @@ import type {
   PerformanceSummary,
   SignalConfig,
   PositionSizingConfig,
+  WebhookConfig,
+  JournalEntry,
 } from "@/lib/types";
 
 interface EventLogEntry {
@@ -120,10 +122,17 @@ export default function Dashboard() {
     max_position_pct: 0.10,
   });
   const [positionSizingStatus, setPositionSizingStatus] = useState<string | null>(null);
+  const [webhooks, setWebhooks] = useState<WebhookConfig[]>([]);
+  const [newWebhookUrl, setNewWebhookUrl] = useState('');
+  const [newWebhookEvents, setNewWebhookEvents] = useState<string[]>(['*']);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [journalPage, setJournalPage] = useState(0);
+  const [journalTotal, setJournalTotal] = useState(0);
+  const JOURNAL_PAGE_SIZE = 50;
 
   const refreshData = useCallback(async () => {
     try {
-      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun, sigCfg, posSizingCfg] = await Promise.all([
+      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun, sigCfg, posSizingCfg, webhooks, journal] = await Promise.all([
         api.getHealth().catch(() => ({ status: "error" })),
         api.getLLMConfig().catch(() => null),
         api.getUsageSummary().catch(() => []),
@@ -139,6 +148,8 @@ export default function Dashboard() {
         api.getDryRunStatus().catch(() => ({ enabled: false })),
         api.getSignalConfig().catch(() => null),
         api.getPositionSizingConfig().catch(() => null),
+        api.getWebhooks().catch(() => []),
+        api.getTradeJournal(JOURNAL_PAGE_SIZE, journalPage * JOURNAL_PAGE_SIZE).catch(() => ({ data: [], total: 0, limit: JOURNAL_PAGE_SIZE, offset: 0, has_more: false })),
       ]);
 
       setHealth(h.status === "ok" ? "connected" : "error");
@@ -157,13 +168,16 @@ export default function Dashboard() {
       setDryRunMode(dryRun.enabled);
       if (sigCfg) setSignalConfig(sigCfg);
       if (posSizingCfg) setPositionSizingConfig(posSizingCfg);
+      setWebhooks(webhooks);
+      setJournalEntries(journal.data || []);
+      setJournalTotal(journal.total || 0);
       setKillSwitch(!!risk.kill_switch_active);
     } catch {
       setHealth("error");
     } finally {
       setIsLoading(false);
     }
-  }, [orderPage]);
+  }, [orderPage, journalPage]);
 
   useEffect(() => {
     refreshData();
@@ -333,6 +347,41 @@ export default function Dashboard() {
       setTradeStatus(`Error: Failed to cancel order ${orderId}: ${e.message}`);
     } finally {
       setCancellingOrderId(null);
+    }
+  };
+
+  const handleCreateWebhook = async () => {
+    if (!newWebhookUrl.trim()) {
+      setToast({ message: "URL is required", type: "error" });
+      return;
+    }
+    try {
+      await api.createWebhook(newWebhookUrl, newWebhookEvents);
+      setToast({ message: "Webhook created successfully", type: "success" });
+      setNewWebhookUrl('');
+      setNewWebhookEvents(['*']);
+      refreshData();
+    } catch (e: any) {
+      setToast({ message: `Error: ${e.message}`, type: "error" });
+    }
+  };
+
+  const handleDeleteWebhook = async (id: string) => {
+    try {
+      await api.deleteWebhook(id);
+      setToast({ message: "Webhook deleted", type: "success" });
+      refreshData();
+    } catch (e: any) {
+      setToast({ message: `Error: ${e.message}`, type: "error" });
+    }
+  };
+
+  const handleTestWebhook = async (id: string) => {
+    try {
+      await api.testWebhook(id);
+      setToast({ message: "Test webhook sent", type: "success" });
+    } catch (e: any) {
+      setToast({ message: `Error: ${e.message}`, type: "error" });
     }
   };
 
@@ -1087,6 +1136,174 @@ export default function Dashboard() {
             <p style={{ marginTop: 8, fontSize: 12, color: positionSizingStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
               {positionSizingStatus}
             </p>
+          )}
+        </div>
+
+        {/* Webhooks */}
+        <div className="card dashboard-full">
+          <h2>Webhooks</h2>
+          {webhooks.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No webhooks registered</p>
+          ) : (
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Event Types</th>
+                    <th>Enabled</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {webhooks.map((w) => (
+                    <tr key={w.id}>
+                      <td style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>{w.url}</td>
+                      <td>{w.event_types.join(", ")}</td>
+                      <td>{w.enabled ? "Yes" : "No"}</td>
+                      <td>
+                        <button
+                          className="btn"
+                          style={{ fontSize: 11, padding: "2px 8px", marginRight: 4 }}
+                          onClick={() => handleTestWebhook(w.id)}
+                        >
+                          Test
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ fontSize: 11, padding: "2px 8px", background: "#ef4444" }}
+                          onClick={() => handleDeleteWebhook(w.id)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <hr style={{ margin: "12px 0", borderColor: "var(--border)" }} />
+          <h3 style={{ fontSize: 13, marginBottom: 8, color: "var(--text-muted)" }}>Add New Webhook</h3>
+          <div className="form-row">
+            <label>Webhook URL</label>
+            <input
+              className="input"
+              value={newWebhookUrl}
+              onChange={(e) => setNewWebhookUrl(e.target.value)}
+              placeholder="https://example.com/webhook"
+            />
+          </div>
+          <div className="form-row">
+            <label>Event Types</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {["order_executed", "order_failed", "trade_rejected", "order_cancelled"].map((event) => (
+                <label key={event} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={newWebhookEvents.includes(event)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setNewWebhookEvents([...newWebhookEvents.filter(e => e !== '*'), event]);
+                      } else {
+                        setNewWebhookEvents(newWebhookEvents.filter(e => e !== event));
+                        if (newWebhookEvents.filter(e => e !== event).length === 0) {
+                          setNewWebhookEvents(['*']);
+                        }
+                      }
+                    }}
+                  />
+                  {event}
+                </label>
+              ))}
+              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={newWebhookEvents.includes('*')}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setNewWebhookEvents(['*']);
+                    } else {
+                      setNewWebhookEvents([]);
+                    }
+                  }}
+                />
+                All events (*)
+              </label>
+            </div>
+          </div>
+          <button className="btn" onClick={handleCreateWebhook} style={{ marginTop: 12 }}>
+            Add Webhook
+          </button>
+        </div>
+
+        {/* Trade Journal */}
+        <div className="card dashboard-full">
+          <h2>Trade Journal</h2>
+          {journalEntries.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No journal entries yet</p>
+          ) : (
+            <>
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Event</th>
+                      <th>Symbol</th>
+                      <th>Side</th>
+                      <th>Qty</th>
+                      <th>Price</th>
+                      <th>Status</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journalEntries.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>{entry.created_at}</td>
+                        <td>
+                          <span
+                            style={{
+                              padding: "2px 6px",
+                              borderRadius: 3,
+                              fontSize: 11,
+                              background:
+                                entry.event_type === "risk_check"
+                                  ? "#fbbf24"
+                                  : entry.event_type === "order_executed"
+                                  ? "#22c55e"
+                                  : entry.event_type === "order_failed"
+                                  ? "#ef4444"
+                                  : "#999",
+                              color: "#fff",
+                            }}
+                          >
+                            {entry.event_type}
+                          </span>
+                        </td>
+                        <td>{entry.symbol || "-"}</td>
+                        <td>{entry.side || "-"}</td>
+                        <td>{entry.quantity || "-"}</td>
+                        <td>{entry.price ? `$${entry.price.toFixed(2)}` : "-"}</td>
+                        <td>{entry.status || "-"}</td>
+                        <td
+                          style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer" }}
+                          title={entry.details}
+                        >
+                          {entry.details}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, alignItems: "center" }}>
+                <button disabled={journalPage === 0} onClick={() => setJournalPage(p => p - 1)}>← Previous</button>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Page {journalPage + 1} of {Math.ceil(journalTotal / JOURNAL_PAGE_SIZE) || 1}</span>
+                <button disabled={journalPage * JOURNAL_PAGE_SIZE + JOURNAL_PAGE_SIZE >= journalTotal} onClick={() => setJournalPage(p => p + 1)}>Next →</button>
+              </div>
+            </>
           )}
         </div>
 
