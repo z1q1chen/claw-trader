@@ -273,7 +273,8 @@ class PolymarketAdapter(BrokerAdapter):
                 "POL": pol_balance_float,
                 "USDC.e": usdc_balance,
             }
-        except Exception:
+        except Exception as e:
+            logger.error(f"Balance fetch error: {e}")
             return {}
 
     async def _get_usdc_balance(self, w3, address: str) -> float:

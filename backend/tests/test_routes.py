@@ -1693,3 +1693,172 @@ class TestRateLimitingBypassPrevention:
             mock_settings.trust_proxy_headers = False
             # Default behavior should not trust proxy headers
             assert mock_settings.trust_proxy_headers is False
+
+
+class TestSignalConfigMutation:
+    """Test that signal config is not mutated if validation fails."""
+
+    def _make_signal_config_mock(self):
+        mock_cfg = MagicMock()
+        mock_cfg.rsi_period = 14
+        mock_cfg.rsi_oversold = 30.0
+        mock_cfg.rsi_overbought = 70.0
+        mock_cfg.macd_fast = 12
+        mock_cfg.macd_slow = 26
+        mock_cfg.macd_signal = 9
+        mock_cfg.volume_spike_ratio = 2.0
+        mock_cfg.bb_period = 20
+        mock_cfg.bb_std_dev = 2.0
+        return mock_cfg
+
+    def test_signal_config_not_mutated_on_invalid_cross_field_validation(self, client):
+        """Test that config is NOT mutated when cross-field validation fails."""
+        with patch("app.main.signal_engine") as mock_sig:
+            mock_cfg = self._make_signal_config_mock()
+            mock_sig.signal_config = mock_cfg
+
+            # Try to set rsi_oversold > rsi_overbought (invalid)
+            resp = client.post("/api/config/signal", json={
+                "rsi_oversold": 75.0,
+                "rsi_overbought": 65.0,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+
+            # Verify config was NOT mutated
+            assert mock_cfg.rsi_oversold == 30.0
+            assert mock_cfg.rsi_overbought == 70.0
+
+    def test_signal_config_not_mutated_on_invalid_type(self, client):
+        """Test that config is NOT mutated when type conversion fails."""
+        with patch("app.main.signal_engine") as mock_sig:
+            mock_cfg = self._make_signal_config_mock()
+            original_period = mock_cfg.rsi_period
+            original_oversold = mock_cfg.rsi_oversold
+            mock_sig.signal_config = mock_cfg
+
+            # Try to send invalid data that mixes valid and invalid
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": 20,
+                "rsi_oversold": "not_a_number",
+            })
+            assert resp.status_code == 400
+
+            # Verify neither config was mutated
+            assert mock_cfg.rsi_period == original_period
+            assert mock_cfg.rsi_oversold == original_oversold
+
+    def test_signal_config_mutated_on_valid_update(self, client):
+        """Test that config IS mutated when all validation passes."""
+        with patch("app.main.signal_engine") as mock_sig, \
+             patch("app.api.routes.save_signal_config", new_callable=AsyncMock):
+            mock_cfg = self._make_signal_config_mock()
+            mock_sig.signal_config = mock_cfg
+
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": 21,
+                "rsi_oversold": 25.0,
+            })
+            assert resp.status_code == 200
+
+            # Verify config WAS mutated
+            assert mock_cfg.rsi_period == 21
+            assert mock_cfg.rsi_oversold == 25.0
+
+
+class TestRiskConfigKillSwitchReEvaluation:
+    """Test that risk config update re-evaluates kill switch."""
+
+    def test_risk_config_deactivates_kill_switch_when_limits_met(self, client):
+        """Test that kill switch is deactivated when new limits are met."""
+        with patch("app.core.config.settings") as mock_settings, \
+             patch("app.main.risk_engine") as mock_risk, \
+             patch("app.api.routes.save_risk_config", new_callable=AsyncMock) as mock_save:
+
+            # Setup settings
+            mock_settings.max_position_usd = 10000.0
+            mock_settings.max_daily_loss_usd = 5000.0
+            mock_settings.max_portfolio_exposure_usd = 50000.0
+            mock_settings.max_single_trade_usd = 2000.0
+            mock_settings.max_drawdown_pct = 10.0
+            mock_settings.max_position_concentration_pct = 20.0
+
+            # Setup risk engine with kill switch active and values that violate current limits
+            mock_risk.kill_switch_active = True
+            mock_risk.get_risk_snapshot.return_value = {
+                "daily_pnl_usd": -4000.0,  # Within new limit of -5000
+                "max_drawdown_pct": 8.0,   # Within new limit of 10
+            }
+
+            resp = client.post("/api/risk/config", json={
+                "max_daily_loss_usd": 5000,
+                "max_drawdown_pct": 10.0,
+            })
+            assert resp.status_code == 200
+
+            # Verify deactivate_kill_switch was called
+            mock_risk.deactivate_kill_switch.assert_called_once()
+
+    def test_risk_config_does_not_deactivate_kill_switch_if_limits_not_met(self, client):
+        """Test that kill switch stays active if limits are still not met."""
+        with patch("app.core.config.settings") as mock_settings, \
+             patch("app.main.risk_engine") as mock_risk, \
+             patch("app.api.routes.save_risk_config", new_callable=AsyncMock) as mock_save:
+
+            # Setup settings
+            mock_settings.max_position_usd = 10000.0
+            mock_settings.max_daily_loss_usd = 5000.0
+            mock_settings.max_portfolio_exposure_usd = 50000.0
+            mock_settings.max_single_trade_usd = 2000.0
+            mock_settings.max_drawdown_pct = 10.0
+            mock_settings.max_position_concentration_pct = 20.0
+
+            # Setup risk engine with kill switch active but values still violate new limits
+            mock_risk.kill_switch_active = True
+            mock_risk.get_risk_snapshot.return_value = {
+                "daily_pnl_usd": -8000.0,  # Still exceeds new limit of -5000
+                "max_drawdown_pct": 8.0,
+            }
+
+            resp = client.post("/api/risk/config", json={
+                "max_daily_loss_usd": 5000,
+                "max_drawdown_pct": 10.0,
+            })
+            assert resp.status_code == 200
+
+            # Verify deactivate_kill_switch was NOT called
+            mock_risk.deactivate_kill_switch.assert_not_called()
+
+
+class TestBalanceAPIErrorSanitization:
+    """Test that balance API doesn't leak error details."""
+
+    def test_balance_endpoint_returns_generic_error(self, client):
+        """Test that balance endpoint returns generic error message, not exception details."""
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec.get_balance = AsyncMock(
+                side_effect=Exception("Invalid private key: 0x1234567890abcdef...")
+            )
+            resp = client.get("/api/balance/polymarket")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "error" in data
+            # Should not contain actual exception message
+            assert "Invalid private key" not in data["error"]
+            assert "0x1234567890" not in data["error"]
+            # Should have generic message
+            assert data["error"] == "Failed to fetch balance"
+
+    def test_balance_endpoint_success(self, client):
+        """Test that balance endpoint works normally on success."""
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec.get_balance = AsyncMock(
+                return_value={"POL": 10.5, "USDC.e": 1000.0}
+            )
+            resp = client.get("/api/balance/polymarket")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["broker"] == "polymarket"
+            assert data["balance"]["POL"] == 10.5
+            assert "error" not in data

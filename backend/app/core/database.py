@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import aiosqlite
 import asyncio
+import base64
 import json
 import re
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 
 from app.core.config import settings
@@ -12,6 +14,31 @@ from app.core.logging import logger
 
 
 _write_lock = asyncio.Lock()
+
+
+def _xor_encrypt(value: str, key: str) -> str:
+    """Simple XOR encryption for secrets at rest. Not cryptographically strong but better than plaintext."""
+    key_bytes = sha256(key.encode()).digest()
+    val_bytes = value.encode()
+    encrypted = bytes(v ^ key_bytes[i % len(key_bytes)] for i, v in enumerate(val_bytes))
+    return base64.b64encode(encrypted).decode()
+
+
+def _xor_decrypt(encrypted: str, key: str) -> str:
+    """Decrypt XOR-encrypted value. Returns plaintext if decryption fails (backwards compat)."""
+    try:
+        key_bytes = sha256(key.encode()).digest()
+        val_bytes = base64.b64decode(encrypted)
+        decrypted = bytes(v ^ key_bytes[i % len(key_bytes)] for i, v in enumerate(val_bytes))
+        return decrypted.decode()
+    except Exception:
+        # Backwards compatibility: if decryption fails, treat as plaintext
+        return encrypted
+
+
+def _get_encryption_key() -> str:
+    """Get the encryption key, defaulting to a standard key if not configured."""
+    return settings.api_secret_key or "claw-trader-default-key"
 
 
 def _get_db_path() -> str:
@@ -568,7 +595,16 @@ async def load_llm_config() -> dict | None:
             "SELECT * FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
         )
         row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        config = dict(row)
+        # Decrypt api_key if present
+        if config.get("api_key"):
+            try:
+                config["api_key"] = _xor_decrypt(config["api_key"], _get_encryption_key())
+            except Exception as e:
+                logger.warning(f"Failed to decrypt api_key: {e}, using as-is")
+        return config
 
 
 async def get_latest_timestamps() -> dict[str, str | None]:

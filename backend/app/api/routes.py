@@ -189,19 +189,23 @@ async def get_llm_config():
 
 @router.post("/api/llm/config")
 async def update_llm_config(req: LLMConfigRequest):
-    from app.core.database import _write_lock
+    from app.core.database import _write_lock, _xor_encrypt, _get_encryption_key
 
     async with _write_lock:
         async with aiosqlite.connect(DB_PATH) as db:
-            # If no api_key provided, keep the existing one
-            api_key = req.api_key
-            if not api_key:
+            # If no api_key provided, keep the existing one (already encrypted)
+            api_key_plaintext = req.api_key
+            api_key_to_store = req.api_key
+            if not api_key_to_store:
                 db.row_factory = aiosqlite.Row
                 cursor = await db.execute(
                     "SELECT api_key FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
                 )
                 row = await cursor.fetchone()
-                api_key = row["api_key"] if row else ""
+                api_key_to_store = row["api_key"] if row else ""
+            else:
+                # Encrypt the new api_key before storing
+                api_key_to_store = _xor_encrypt(api_key_plaintext, _get_encryption_key())
 
             try:
                 await db.execute("BEGIN")
@@ -209,7 +213,7 @@ async def update_llm_config(req: LLMConfigRequest):
                 await db.execute(
                     """INSERT INTO llm_config (provider, model_name, api_key, base_url, is_active)
                        VALUES (?, ?, ?, ?, 1)""",
-                    (req.provider, req.model_name, api_key, req.base_url or ""),
+                    (req.provider, req.model_name, api_key_to_store, req.base_url or ""),
                 )
                 await db.execute("COMMIT")
             except Exception as e:
@@ -218,7 +222,8 @@ async def update_llm_config(req: LLMConfigRequest):
                 raise
 
     data = req.model_dump()
-    data["api_key"] = api_key  # Use the resolved key for brain reconfiguration
+    # Use plaintext key for brain reconfiguration (only send the plaintext that was provided)
+    data["api_key"] = api_key_plaintext if api_key_plaintext else api_key_to_store
     await event_bus.publish(Event(type="llm_config_changed", data=data))
     return {"status": "ok"}
 
@@ -344,7 +349,7 @@ async def get_balance(broker: str):
         return {"broker": broker, "balance": balance}
     except Exception as e:
         logger.error(f"Balance fetch error: {e}")
-        return {"broker": broker, "balance": {}, "error": str(e)}
+        return {"broker": broker, "balance": {}, "error": "Failed to fetch balance"}
 
 
 # --- Risk ---
@@ -389,6 +394,7 @@ async def get_risk_config():
 
 @router.post("/api/risk/config")
 async def update_risk_config(req: RiskConfigRequest):
+    from app.main import risk_engine
     errors = []
     if req.max_position_usd is not None and req.max_position_usd <= 0:
         errors.append("max_position_usd must be positive")
@@ -426,6 +432,20 @@ async def update_risk_config(req: RiskConfigRequest):
         settings.max_drawdown_pct,
         settings.max_position_concentration_pct,
     )
+
+    # Re-evaluate kill switch with new limits
+    if risk_engine.kill_switch_active:
+        snapshot = risk_engine.get_risk_snapshot()
+        daily_pnl = snapshot.get("daily_pnl_usd", 0)
+        drawdown_pct = snapshot.get("max_drawdown_pct", 0)
+
+        # Check if daily PnL is now within the new limit
+        if daily_pnl >= -settings.max_daily_loss_usd:
+            # Check if drawdown is also within the new limit
+            if drawdown_pct <= settings.max_drawdown_pct:
+                risk_engine.deactivate_kill_switch()
+                logger.info("Kill switch deactivated: new risk limits now met")
+
     return {"status": "ok"}
 
 
@@ -499,15 +519,39 @@ async def websocket_endpoint(ws: WebSocket):
 
         async def receive_loop():
             while True:
-                data = await ws.receive_json()
-                # Only process commands from authenticated connections
-                if not ws_authenticated:
+                try:
+                    raw = await ws.receive_text()
+                    # Check message size limit
+                    if len(raw) > 4096:
+                        logger.warning(f"WebSocket message exceeds size limit: {len(raw)} bytes, skipping")
+                        continue
+
+                    try:
+                        data = json.loads(raw)
+                    except (json.JSONDecodeError, ValueError) as e:
+                        logger.warning(f"WebSocket received malformed JSON: {e}")
+                        continue
+
+                    # Only process commands from authenticated connections
+                    if not ws_authenticated:
+                        continue
+                    command = data.get("command")
+                    if command == "kill_switch":
+                        await event_bus.publish(Event(type="kill_switch_toggle", data={"active": data.get("active", True)}))
+                    elif command == "refresh":
+                        pass
+                except json.JSONDecodeError:
+                    logger.warning("WebSocket: Invalid JSON received")
                     continue
-                command = data.get("command")
-                if command == "kill_switch":
-                    await event_bus.publish(Event(type="kill_switch_toggle", data={"active": data.get("active", True)}))
-                elif command == "refresh":
-                    pass
+                except ValueError as e:
+                    logger.warning(f"WebSocket: Value error processing message: {e}")
+                    continue
+                except Exception as e:
+                    # Don't catch WebSocketDisconnect - let it propagate
+                    if type(e).__name__ == "WebSocketDisconnect":
+                        raise
+                    logger.warning(f"WebSocket receive_loop error: {e}")
+                    continue
 
         await asyncio.gather(send_loop(), receive_loop())
     except WebSocketDisconnect:
@@ -789,6 +833,9 @@ async def update_signal_config(req: dict):
     from fastapi.responses import JSONResponse
     cfg = signal_engine.signal_config
     errors = []
+    pending_updates = {}
+
+    # Collect all updates first without mutating the config
     for key in ("rsi_period", "rsi_oversold", "rsi_overbought", "macd_fast", "macd_slow", "macd_signal", "volume_spike_ratio", "bb_period", "bb_std_dev"):
         if key in req:
             try:
@@ -797,7 +844,7 @@ async def update_signal_config(req: dict):
                 if value <= 0:
                     errors.append(f"{key} must be positive")
                 else:
-                    setattr(cfg, key, value)
+                    pending_updates[key] = value
             except (ValueError, TypeError) as e:
                 errors.append(f"Invalid value for {key}: {e}")
 
@@ -810,11 +857,13 @@ async def update_signal_config(req: dict):
                 errors.append("rsi_oversold must be less than rsi_overbought")
         elif "rsi_oversold" in req:
             rsi_oversold = float(req["rsi_oversold"])
-            if rsi_oversold >= cfg.rsi_overbought:
+            rsi_overbought_val = float(pending_updates.get("rsi_overbought", cfg.rsi_overbought))
+            if rsi_oversold >= rsi_overbought_val:
                 errors.append("rsi_oversold must be less than rsi_overbought")
         elif "rsi_overbought" in req:
+            rsi_oversold_val = float(pending_updates.get("rsi_oversold", cfg.rsi_oversold))
             rsi_overbought = float(req["rsi_overbought"])
-            if cfg.rsi_oversold >= rsi_overbought:
+            if rsi_oversold_val >= rsi_overbought:
                 errors.append("rsi_oversold must be less than rsi_overbought")
 
         if "macd_fast" in req and "macd_slow" in req:
@@ -824,11 +873,13 @@ async def update_signal_config(req: dict):
                 errors.append("macd_fast must be less than macd_slow")
         elif "macd_fast" in req:
             macd_fast = int(req["macd_fast"])
-            if macd_fast >= cfg.macd_slow:
+            macd_slow_val = int(pending_updates.get("macd_slow", cfg.macd_slow))
+            if macd_fast >= macd_slow_val:
                 errors.append("macd_fast must be less than macd_slow")
         elif "macd_slow" in req:
+            macd_fast_val = int(pending_updates.get("macd_fast", cfg.macd_fast))
             macd_slow = int(req["macd_slow"])
-            if cfg.macd_fast >= macd_slow:
+            if macd_fast_val >= macd_slow:
                 errors.append("macd_fast must be less than macd_slow")
 
         if "rsi_period" in req:
@@ -840,6 +891,10 @@ async def update_signal_config(req: dict):
 
     if errors:
         return JSONResponse(status_code=400, content={"errors": errors})
+
+    # Apply all updates only after all validation passes
+    for key, value in pending_updates.items():
+        setattr(cfg, key, value)
 
     config_dict = {
         "rsi_period": cfg.rsi_period,
@@ -877,9 +932,10 @@ async def update_position_sizing_config(req: dict):
     cfg = execution_engine._position_sizer.config
     valid_methods = ("fixed", "fixed_fractional", "kelly")
     errors = []
+    pending_updates = {}
 
     if "method" in req and req["method"] in valid_methods:
-        cfg.method = req["method"]
+        pending_updates["method"] = req["method"]
 
     if "max_position_pct" in req:
         try:
@@ -887,7 +943,7 @@ async def update_position_sizing_config(req: dict):
             if val <= 0 or val > 1.0:
                 errors.append("max_position_pct must be between 0 (exclusive) and 1.0 (inclusive)")
             else:
-                cfg.max_position_pct = val
+                pending_updates["max_position_pct"] = val
         except (ValueError, TypeError):
             errors.append("max_position_pct must be a number")
 
@@ -897,7 +953,7 @@ async def update_position_sizing_config(req: dict):
             if val <= 0:
                 errors.append("kelly_avg_loss must be positive")
             else:
-                cfg.kelly_avg_loss = val
+                pending_updates["kelly_avg_loss"] = val
         except (ValueError, TypeError):
             errors.append("kelly_avg_loss must be a number")
 
@@ -907,7 +963,7 @@ async def update_position_sizing_config(req: dict):
             if val <= 0:
                 errors.append("kelly_avg_win must be positive")
             else:
-                cfg.kelly_avg_win = val
+                pending_updates["kelly_avg_win"] = val
         except (ValueError, TypeError):
             errors.append("kelly_avg_win must be a number")
 
@@ -917,7 +973,7 @@ async def update_position_sizing_config(req: dict):
             if val < 0 or val > 1:
                 errors.append("kelly_win_rate must be between 0 and 1")
             else:
-                cfg.kelly_win_rate = val
+                pending_updates["kelly_win_rate"] = val
         except (ValueError, TypeError):
             errors.append("kelly_win_rate must be a number")
 
@@ -927,7 +983,7 @@ async def update_position_sizing_config(req: dict):
             if val <= 0:
                 errors.append("fixed_quantity must be positive")
             else:
-                cfg.fixed_quantity = val
+                pending_updates["fixed_quantity"] = val
         except (ValueError, TypeError):
             errors.append("fixed_quantity must be a number")
 
@@ -937,12 +993,16 @@ async def update_position_sizing_config(req: dict):
             if val < 0 or val > 1:
                 errors.append("portfolio_fraction must be between 0 and 1")
             else:
-                cfg.portfolio_fraction = val
+                pending_updates["portfolio_fraction"] = val
         except (ValueError, TypeError):
             errors.append("portfolio_fraction must be a number")
 
     if errors:
         raise HTTPException(status_code=422, detail=errors)
+
+    # Apply all updates only after all validation passes
+    for key, value in pending_updates.items():
+        setattr(cfg, key, value)
 
     config_dict = {
         "method": cfg.method,

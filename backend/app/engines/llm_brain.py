@@ -85,9 +85,9 @@ class GeminiProvider(LLMProvider):
         client = await self._get_client()
         start = time.monotonic()
 
-        loop = asyncio.get_running_loop()
-        try:
-            response = await asyncio.wait_for(
+        async def _make_request():
+            loop = asyncio.get_running_loop()
+            return await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
                     lambda: client.models.generate_content(
@@ -101,6 +101,9 @@ class GeminiProvider(LLMProvider):
                 ),
                 timeout=settings.llm_request_timeout_s,
             )
+
+        try:
+            response = await _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0)
         except asyncio.TimeoutError:
             logger.warning(f"Gemini API request timed out after {settings.llm_request_timeout_s}s")
             return None
@@ -108,7 +111,7 @@ class GeminiProvider(LLMProvider):
         latency = (time.monotonic() - start) * 1000
         usage = response.usage_metadata
         return LLMResponse(
-            content=response.text,
+            content=response.text or "",
             prompt_tokens=usage.prompt_token_count or 0,
             completion_tokens=usage.candidates_token_count or 0,
             model=self.model,
@@ -389,7 +392,7 @@ class LLMBrain:
 
             try:
                 decision = json.loads(response.content)
-            except (json.JSONDecodeError, ValueError) as e:
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
                 logger.warning(f"LLM returned invalid JSON: {e}. Raw: {response.content[:200]}")
                 self._last_call_success = False
                 self._last_call_error = f"Invalid JSON response: {str(e)}"
