@@ -443,7 +443,7 @@ class TestPerformanceEndpoints:
             assert data["win_rate"] == 0
             assert data["total_pnl"] == 0
             assert "profit_factor" in data
-            assert "sharpe_ratio" in data
+            assert "matched_trades" in data
 
     def test_get_performance_summary_with_trades(self, client):
         """Test performance summary endpoint with trade data."""
@@ -508,3 +508,203 @@ class TestDryRunEndpoint:
         data = resp.json()
         assert "enabled" in data
         assert isinstance(data["enabled"], bool)
+
+
+class TestPerformanceSummaryPnL:
+    """Test fixed P&L calculation in performance summary."""
+
+    def test_performance_summary_matched_buy_sell_pairs(self, client):
+        """Test that P&L is calculated correctly from matched buy/sell pairs."""
+        mock_trades = [
+            {"symbol": "AAPL", "side": "BUY", "filled_price": 100.0, "filled_quantity": 10},
+            {"symbol": "AAPL", "side": "SELL", "filled_price": 105.0, "filled_quantity": 10},
+            {"symbol": "AAPL", "side": "BUY", "filled_price": 110.0, "filled_quantity": 5},
+        ]
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_trades
+            resp = client.get("/api/performance/summary")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total_trades"] == 3
+            assert data["matched_trades"] == 1
+            assert data["winning_trades"] == 1
+            assert data["losing_trades"] == 0
+            assert data["total_pnl"] == 50.0
+            assert data["avg_win"] == 50.0
+            assert data["avg_loss"] == 0.0
+            assert data["win_rate"] == 100.0
+            assert data["profit_factor"] == 0.0
+
+    def test_performance_summary_multiple_matched_pairs(self, client):
+        """Test multiple matched buy/sell pairs."""
+        mock_trades = [
+            {"symbol": "AAPL", "side": "BUY", "filled_price": 100.0, "filled_quantity": 10},
+            {"symbol": "AAPL", "side": "SELL", "filled_price": 102.0, "filled_quantity": 10},
+            {"symbol": "GOOGL", "side": "BUY", "filled_price": 2000.0, "filled_quantity": 5},
+            {"symbol": "GOOGL", "side": "SELL", "filled_price": 1990.0, "filled_quantity": 5},
+        ]
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_trades
+            resp = client.get("/api/performance/summary")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total_trades"] == 4
+            assert data["matched_trades"] == 2
+            assert data["winning_trades"] == 1
+            assert data["losing_trades"] == 1
+            # AAPL: (102-100) * 10 = 20, GOOGL: (1990-2000) * 5 = -50, total = -30
+            assert data["total_pnl"] == -30.0
+            # profit_factor = abs(sum(wins) / sum(losses)) = abs(20 / -50) = 0.4
+            assert data["profit_factor"] == 0.4
+
+    def test_performance_summary_no_matched_pairs(self, client):
+        """Test when there are no complete buy/sell pairs."""
+        mock_trades = [
+            {"symbol": "AAPL", "side": "BUY", "filled_price": 100.0, "filled_quantity": 10},
+        ]
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_trades
+            resp = client.get("/api/performance/summary")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total_trades"] == 1
+            assert data["matched_trades"] == 0
+            assert data["winning_trades"] == 0
+            assert data["losing_trades"] == 0
+            assert data["total_pnl"] == 0.0
+            assert data["win_rate"] == 0.0
+
+
+class TestSignalConfigValidation:
+    """Test signal config update validation."""
+
+    def test_signal_config_valid_update(self, client):
+        """Test valid signal config update."""
+        with patch("app.main.signal_engine") as mock_sig:
+            mock_cfg = MagicMock()
+            mock_cfg.rsi_period = 14
+            mock_cfg.rsi_oversold = 30
+            mock_sig.signal_config = mock_cfg
+
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": 20,
+                "rsi_oversold": 25,
+            })
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "ok"
+            assert mock_cfg.rsi_period == 20
+            assert mock_cfg.rsi_oversold == 25
+
+    def test_signal_config_rejects_negative(self, client):
+        """Test that negative values are rejected."""
+        with patch("app.main.signal_engine") as mock_sig:
+            mock_cfg = MagicMock()
+            mock_cfg.rsi_period = 14
+            mock_sig.signal_config = mock_cfg
+
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": -10,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("positive" in str(e).lower() for e in data["errors"])
+
+    def test_signal_config_rejects_invalid_type(self, client):
+        """Test that invalid type conversions are rejected."""
+        with patch("app.main.signal_engine") as mock_sig:
+            mock_cfg = MagicMock()
+            mock_cfg.rsi_period = 14
+            mock_sig.signal_config = mock_cfg
+
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": "not_a_number",
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("Invalid" in str(e) for e in data["errors"])
+
+    def test_signal_config_rejects_zero(self, client):
+        """Test that zero values are rejected."""
+        with patch("app.main.signal_engine") as mock_sig:
+            mock_cfg = MagicMock()
+            mock_cfg.macd_fast = 12
+            mock_sig.signal_config = mock_cfg
+
+            resp = client.post("/api/config/signal", json={
+                "macd_fast": 0,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("positive" in str(e).lower() for e in data["errors"])
+
+
+class TestPositionSizingEndpoints:
+    def test_get_position_sizing_config(self, client):
+        """Test GET /api/config/position-sizing returns expected fields."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.get("/api/config/position-sizing")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "method" in data
+            assert "fixed_quantity" in data
+            assert "portfolio_fraction" in data
+            assert "kelly_win_rate" in data
+            assert "kelly_avg_win" in data
+            assert "kelly_avg_loss" in data
+            assert "max_position_pct" in data
+
+    def test_update_position_sizing_config_method(self, client):
+        """Test POST /api/config/position-sizing updates method."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "method": "kelly"
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert mock_exec._position_sizer.config.method == "kelly"
+
+    def test_update_position_sizing_config_parameters(self, client):
+        """Test POST /api/config/position-sizing updates parameters."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "fixed_quantity": 50.0,
+                "portfolio_fraction": 0.05,
+                "kelly_win_rate": 0.60
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert mock_exec._position_sizer.config.fixed_quantity == 50.0
+            assert mock_exec._position_sizer.config.portfolio_fraction == 0.05
+            assert mock_exec._position_sizer.config.kelly_win_rate == 0.60
+
+    def test_update_position_sizing_config_invalid_method(self, client):
+        """Test POST /api/config/position-sizing ignores invalid method."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            original_method = mock_sizer.config.method
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "method": "invalid_method"
+            })
+            assert resp.status_code == 200
+            # Invalid method should be ignored, not set
+            assert mock_exec._position_sizer.config.method == original_method

@@ -11,6 +11,7 @@ import {
   BrokersResponse,
   PolymarketMarket,
   PerformanceSummary,
+  SignalConfig,
 } from "./types";
 
 const API_BASE = "/api";
@@ -53,7 +54,10 @@ export const api = {
     fetchJSON<TradeDecision[]>(`/decisions?limit=${limit}`),
 
   // Orders
-  getOrders: (limit = 50) => fetchJSON<Order[]>(`/orders?limit=${limit}`),
+  getOrders: (limit = 50, offset = 0) =>
+    fetchJSON<{ data: Order[]; total: number; limit: number; offset: number; has_more: boolean }>(
+      `/orders?limit=${limit}&offset=${offset}`
+    ),
 
   // Positions
   getPositions: () => fetchJSON<Position[]>("/positions"),
@@ -137,6 +141,14 @@ export const api = {
 
   // Dry-run status
   getDryRunStatus: () => fetchJSON<{ enabled: boolean }>("/config/dry-run"),
+
+  // Signal Config
+  getSignalConfig: () => fetchJSON<SignalConfig>("/config/signal"),
+  updateSignalConfig: (config: Partial<SignalConfig>) =>
+    fetchJSON<{ status: string }>("/config/signal", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
 };
 
 export function createWebSocket(

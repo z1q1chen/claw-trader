@@ -125,3 +125,15 @@ export interface PerformanceSummary {
   profit_factor: number;
   sharpe_ratio: number;
 }
+
+export interface SignalConfig {
+  rsi_period: number;
+  rsi_oversold: number;
+  rsi_overbought: number;
+  macd_fast: number;
+  macd_slow: number;
+  macd_signal: number;
+  volume_spike_ratio: number;
+  bb_period: number;
+  bb_std_dev: number;
+}

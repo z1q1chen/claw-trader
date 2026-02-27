@@ -14,6 +14,7 @@ import type {
   BrokersResponse,
   PolymarketMarket,
   PerformanceSummary,
+  SignalConfig,
 } from "@/lib/types";
 
 interface EventLogEntry {
@@ -91,15 +92,30 @@ export default function Dashboard() {
     sharpe_ratio: 0,
   });
   const [dryRunMode, setDryRunMode] = useState(false);
+  const [signalConfig, setSignalConfig] = useState<SignalConfig>({
+    rsi_period: 14,
+    rsi_oversold: 30,
+    rsi_overbought: 70,
+    macd_fast: 12,
+    macd_slow: 26,
+    macd_signal: 9,
+    volume_spike_ratio: 2.0,
+    bb_period: 20,
+    bb_std_dev: 2.0,
+  });
+  const [signalConfigStatus, setSignalConfigStatus] = useState<string | null>(null);
+  const [orderPage, setOrderPage] = useState(0);
+  const [orderTotal, setOrderTotal] = useState(0);
+  const ORDER_PAGE_SIZE = 20;
 
   const refreshData = useCallback(async () => {
     try {
-      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun] = await Promise.all([
+      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun, sigCfg] = await Promise.all([
         api.getHealth().catch(() => ({ status: "error" })),
         api.getLLMConfig().catch(() => null),
         api.getUsageSummary().catch(() => []),
         api.getDecisions(20).catch(() => []),
-        api.getOrders(20).catch(() => []),
+        api.getOrders(ORDER_PAGE_SIZE, orderPage * ORDER_PAGE_SIZE).catch(() => ({ data: [], total: 0, limit: ORDER_PAGE_SIZE, offset: 0, has_more: false })),
         api.getPositions().catch(() => []),
         api.getRiskSnapshot().catch(() => ({})),
         api.getRiskConfig().catch(() => ({})),
@@ -108,13 +124,15 @@ export default function Dashboard() {
         api.getStats().catch(() => ({})),
         api.getPerformanceSummary().catch(() => null),
         api.getDryRunStatus().catch(() => ({ enabled: false })),
+        api.getSignalConfig().catch(() => null),
       ]);
 
       setHealth(h.status === "ok" ? "connected" : "error");
       if (cfg) setLlmConfig((prev) => ({ ...prev, ...cfg }));
       setUsageSummary(usage);
       setDecisions(dec);
-      setOrders(ord);
+      setOrders(ord.data || ord);
+      setOrderTotal(ord.total || 0);
       setPositions(pos);
       setRiskSnapshot(risk);
       setRiskConfig(rc);
@@ -123,11 +141,12 @@ export default function Dashboard() {
       setStats(st);
       if (perf) setPerformanceSummary(perf);
       setDryRunMode(dryRun.enabled);
+      if (sigCfg) setSignalConfig(sigCfg);
       setKillSwitch(!!risk.kill_switch_active);
     } catch {
       setHealth("error");
     }
-  }, []);
+  }, [orderPage]);
 
   useEffect(() => {
     refreshData();
@@ -205,6 +224,31 @@ export default function Dashboard() {
     } catch (e: any) {
       setRiskStatus(`Error: ${e.message}`);
     }
+  };
+
+  const saveSignalConfig = async () => {
+    setSignalConfigStatus(null);
+    try {
+      await api.updateSignalConfig(signalConfig);
+      setSignalConfigStatus("Configuration saved");
+      refreshData();
+    } catch (e: any) {
+      setSignalConfigStatus(`Error: ${e.message}`);
+    }
+  };
+
+  const resetSignalConfig = () => {
+    setSignalConfig({
+      rsi_period: 14,
+      rsi_oversold: 30,
+      rsi_overbought: 70,
+      macd_fast: 12,
+      macd_slow: 26,
+      macd_signal: 9,
+      volume_spike_ratio: 2.0,
+      bb_period: 20,
+      bb_std_dev: 2.0,
+    });
   };
 
   const connectBroker = async (broker: string) => {
@@ -684,6 +728,138 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* Signal Detection Config */}
+        <div className="card">
+          <h2>Signal Detection Config</h2>
+
+          <h3 style={{ fontSize: 13, marginTop: 12, marginBottom: 8, color: "var(--text-muted)" }}>RSI Parameters</h3>
+          <div className="form-row">
+            <label>RSI Period</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.rsi_period || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, rsi_period: parseInt(e.target.value) || 14 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>RSI Oversold Level</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.rsi_oversold || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, rsi_oversold: parseFloat(e.target.value) || 30 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>RSI Overbought Level</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.rsi_overbought || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, rsi_overbought: parseFloat(e.target.value) || 70 })
+              }
+            />
+          </div>
+
+          <h3 style={{ fontSize: 13, marginTop: 12, marginBottom: 8, color: "var(--text-muted)" }}>MACD Parameters</h3>
+          <div className="form-row">
+            <label>MACD Fast Period</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.macd_fast || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, macd_fast: parseInt(e.target.value) || 12 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>MACD Slow Period</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.macd_slow || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, macd_slow: parseInt(e.target.value) || 26 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>MACD Signal Period</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.macd_signal || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, macd_signal: parseInt(e.target.value) || 9 })
+              }
+            />
+          </div>
+
+          <h3 style={{ fontSize: 13, marginTop: 12, marginBottom: 8, color: "var(--text-muted)" }}>Volume Parameters</h3>
+          <div className="form-row">
+            <label>Volume Spike Ratio</label>
+            <input
+              className="input"
+              type="number"
+              step="0.1"
+              value={signalConfig.volume_spike_ratio || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, volume_spike_ratio: parseFloat(e.target.value) || 2.0 })
+              }
+            />
+          </div>
+
+          <h3 style={{ fontSize: 13, marginTop: 12, marginBottom: 8, color: "var(--text-muted)" }}>Bollinger Bands Parameters</h3>
+          <div className="form-row">
+            <label>BB Period</label>
+            <input
+              className="input"
+              type="number"
+              value={signalConfig.bb_period || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, bb_period: parseInt(e.target.value) || 20 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>BB Std Dev</label>
+            <input
+              className="input"
+              type="number"
+              step="0.1"
+              value={signalConfig.bb_std_dev || ""}
+              onChange={(e) =>
+                setSignalConfig({ ...signalConfig, bb_std_dev: parseFloat(e.target.value) || 2.0 })
+              }
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button className="btn" onClick={saveSignalConfig}>
+              Save Configuration
+            </button>
+            <button
+              className="btn"
+              style={{ background: "var(--bg-secondary)" }}
+              onClick={resetSignalConfig}
+            >
+              Reset Defaults
+            </button>
+          </div>
+          {signalConfigStatus && (
+            <p style={{ marginTop: 8, fontSize: 12, color: signalConfigStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
+              {signalConfigStatus}
+            </p>
+          )}
+        </div>
+
         {/* Signals */}
         <div className="card dashboard-full">
           <h2>Recent Signals</h2>
@@ -1008,51 +1184,58 @@ export default function Dashboard() {
           {orders.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No orders yet</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Broker</th>
-                  <th>Symbol</th>
-                  <th>Side</th>
-                  <th>Type</th>
-                  <th>Limit</th>
-                  <th>Qty</th>
-                  <th>Filled Price</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o, i) => (
-                  <tr key={i}>
-                    <td>{o.created_at}</td>
-                    <td>{o.broker}</td>
-                    <td>{o.symbol}</td>
-                    <td>
-                      <span className={`badge badge-${o.side}`}>{o.side}</span>
-                    </td>
-                    <td>{o.order_type}</td>
-                    <td>{o.limit_price ? `$${o.limit_price.toFixed(2)}` : "-"}</td>
-                    <td>{o.quantity}</td>
-                    <td>{o.filled_price ? `$${o.filled_price.toFixed(2)}` : "-"}</td>
-                    <td>{o.status}</td>
-                    <td>
-                      {(o.status === "pending" || o.status === "submitted") && (
-                        <button
-                          className="btn"
-                          style={{ fontSize: 11, padding: "2px 8px" }}
-                          onClick={() => handleCancelOrder(String(o.id), o.broker)}
-                          disabled={cancellingOrderId === String(o.id)}
-                        >
-                          {cancellingOrderId === String(o.id) ? "Cancelling..." : "Cancel"}
-                        </button>
-                      )}
-                    </td>
+            <>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Broker</th>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Type</th>
+                    <th>Limit</th>
+                    <th>Qty</th>
+                    <th>Filled Price</th>
+                    <th>Status</th>
+                    <th>Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {orders.map((o, i) => (
+                    <tr key={i}>
+                      <td>{o.created_at}</td>
+                      <td>{o.broker}</td>
+                      <td>{o.symbol}</td>
+                      <td>
+                        <span className={`badge badge-${o.side}`}>{o.side}</span>
+                      </td>
+                      <td>{o.order_type}</td>
+                      <td>{o.limit_price ? `$${o.limit_price.toFixed(2)}` : "-"}</td>
+                      <td>{o.quantity}</td>
+                      <td>{o.filled_price ? `$${o.filled_price.toFixed(2)}` : "-"}</td>
+                      <td>{o.status}</td>
+                      <td>
+                        {(o.status === "pending" || o.status === "submitted") && (
+                          <button
+                            className="btn"
+                            style={{ fontSize: 11, padding: "2px 8px" }}
+                            onClick={() => handleCancelOrder(String(o.id), o.broker)}
+                            disabled={cancellingOrderId === String(o.id)}
+                          >
+                            {cancellingOrderId === String(o.id) ? "Cancelling..." : "Cancel"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, alignItems: 'center' }}>
+                <button disabled={orderPage === 0} onClick={() => setOrderPage(p => p - 1)}>← Previous</button>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Page {orderPage + 1} of {Math.ceil(orderTotal / ORDER_PAGE_SIZE) || 1}</span>
+                <button disabled={orderPage * ORDER_PAGE_SIZE + ORDER_PAGE_SIZE >= orderTotal} onClick={() => setOrderPage(p => p + 1)}>Next →</button>
+              </div>
+            </>
           )}
         </div>
 

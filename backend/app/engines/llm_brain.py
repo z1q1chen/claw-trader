@@ -291,7 +291,9 @@ class LLMBrain:
             return None
 
         now = time.monotonic()
-        if now - self._last_call_time < self._min_call_interval_s:
+        elapsed = now - self._last_call_time
+        if elapsed < self._min_call_interval_s:
+            logger.debug(f"LLM call skipped (cooldown): {elapsed:.1f}s < {self._min_call_interval_s}s interval")
             return None
         self._last_call_time = now
 

@@ -16,7 +16,12 @@ class DryRunBrokerAdapter(BrokerAdapter):
         self._balance: float = 100000.0  # Start with $100k virtual
         self._order_counter: int = 0
         self._order_history: list[dict[str, Any]] = []
+        self._last_prices: dict[str, float] = {}
         logger.info("DryRun broker initialized with $100,000 virtual balance")
+
+    def set_price(self, symbol: str, price: float) -> None:
+        """Update last known price for a symbol (called during portfolio sync)."""
+        self._last_prices[symbol] = price
 
     async def place_order(
         self, symbol: str, side: str, quantity: float,
@@ -27,7 +32,7 @@ class DryRunBrokerAdapter(BrokerAdapter):
 
         # Simulate slippage (0.1% - 0.3%)
         slippage = random.uniform(0.001, 0.003)
-        base_price = limit_price if limit_price else random.uniform(10, 500)
+        base_price = limit_price or self._last_prices.get(symbol, 100.0)
 
         if side.upper() == "BUY":
             filled_price = base_price * (1 + slippage)

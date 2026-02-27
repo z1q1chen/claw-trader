@@ -651,12 +651,53 @@ async def get_signal_config():
 @router.post("/api/config/signal")
 async def update_signal_config(req: dict):
     from app.main import signal_engine
-    from app.engines.signal_engine import SignalConfig
+    from fastapi.responses import JSONResponse
     cfg = signal_engine.signal_config
-    # Update only provided fields
+    errors = []
     for key in ("rsi_period", "rsi_oversold", "rsi_overbought", "macd_fast", "macd_slow", "macd_signal", "volume_spike_ratio", "bb_period", "bb_std_dev"):
         if key in req:
-            setattr(cfg, key, type(getattr(cfg, key))(req[key]))
+            try:
+                expected_type = type(getattr(cfg, key))
+                value = expected_type(req[key])
+                if value <= 0:
+                    errors.append(f"{key} must be positive")
+                else:
+                    setattr(cfg, key, value)
+            except (ValueError, TypeError) as e:
+                errors.append(f"Invalid value for {key}: {e}")
+    if errors:
+        return JSONResponse(status_code=400, content={"errors": errors})
+    return {"status": "ok"}
+
+
+@router.get("/api/config/position-sizing")
+async def get_position_sizing_config():
+    from app.main import execution_engine
+    cfg = execution_engine._position_sizer.config
+    return {
+        "method": cfg.method,
+        "fixed_quantity": cfg.fixed_quantity,
+        "portfolio_fraction": cfg.portfolio_fraction,
+        "kelly_win_rate": cfg.kelly_win_rate,
+        "kelly_avg_win": cfg.kelly_avg_win,
+        "kelly_avg_loss": cfg.kelly_avg_loss,
+        "max_position_pct": cfg.max_position_pct,
+    }
+
+
+@router.post("/api/config/position-sizing")
+async def update_position_sizing_config(req: dict):
+    from app.main import execution_engine
+    cfg = execution_engine._position_sizer.config
+    valid_methods = ("fixed", "fixed_fractional", "kelly")
+    if "method" in req and req["method"] in valid_methods:
+        cfg.method = req["method"]
+    for key in ("fixed_quantity", "portfolio_fraction", "kelly_win_rate", "kelly_avg_win", "kelly_avg_loss", "max_position_pct"):
+        if key in req:
+            try:
+                setattr(cfg, key, float(req[key]))
+            except (ValueError, TypeError):
+                pass
     return {"status": "ok"}
 
 
@@ -675,29 +716,51 @@ async def get_performance_summary():
     trades = await get_trade_pnl_data()
     if not trades:
         return {
-            "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+            "total_trades": 0, "matched_trades": 0, "winning_trades": 0, "losing_trades": 0,
             "win_rate": 0, "total_pnl": 0, "avg_win": 0, "avg_loss": 0,
-            "profit_factor": 0, "sharpe_ratio": 0,
+            "profit_factor": 0,
         }
 
-    wins = [t for t in trades if (t.get("filled_price", 0) or 0) > 0 and t.get("side") == "SELL"]
-    losses = [t for t in trades if (t.get("filled_price", 0) or 0) > 0 and t.get("side") == "BUY"]
+    total = len(trades)
+    # Calculate P&L from matched buy/sell pairs by symbol
+    symbol_buys: dict[str, list] = {}
+    realized_pnls: list[float] = []
 
-    total_pnl = sum((t.get("filled_price", 0) or 0) * (t.get("filled_quantity", 0) or 0) * (1 if t.get("side") == "SELL" else -1) for t in trades)
+    for t in trades:
+        symbol = t.get("symbol", "")
+        side = (t.get("side") or "").upper()
+        price = t.get("filled_price") or 0
+        qty = t.get("filled_quantity") or t.get("quantity") or 0
 
+        if side == "BUY":
+            symbol_buys.setdefault(symbol, []).append({"price": price, "qty": qty})
+        elif side == "SELL" and symbol in symbol_buys and symbol_buys[symbol]:
+            buy = symbol_buys[symbol].pop(0)
+            pnl = (price - buy["price"]) * min(qty, buy["qty"])
+            realized_pnls.append(pnl)
+
+    wins = [p for p in realized_pnls if p > 0]
+    losses = [p for p in realized_pnls if p < 0]
+
+    total_pnl = sum(realized_pnls) if realized_pnls else 0
     winning_count = len(wins)
     losing_count = len(losses)
-    total = len(trades)
-    win_rate = winning_count / total * 100 if total > 0 else 0
+    matched = winning_count + losing_count
+    win_rate = winning_count / matched * 100 if matched > 0 else 0
+    avg_win = sum(wins) / winning_count if winning_count > 0 else 0
+    avg_loss = sum(losses) / losing_count if losing_count > 0 else 0
+    profit_factor = abs(sum(wins) / sum(losses)) if losses and sum(losses) != 0 else 0
 
     return {
         "total_trades": total,
+        "matched_trades": matched,
         "winning_trades": winning_count,
         "losing_trades": losing_count,
         "win_rate": round(win_rate, 1),
         "total_pnl": round(total_pnl, 2),
-        "profit_factor": 0,
-        "sharpe_ratio": 0,
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+        "profit_factor": round(profit_factor, 2),
     }
 
 

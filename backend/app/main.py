@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config, get_stale_orders, update_order_status
+from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config, get_stale_orders, update_order_status, get_expired_orders
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
 from app.core.middleware import RateLimitMiddleware
@@ -167,6 +167,39 @@ async def periodic_order_reconciliation() -> None:
         await asyncio.sleep(60)
 
 
+async def periodic_expire_orders() -> None:
+    """Periodically cancel expired limit orders."""
+    while True:
+        try:
+            expired_orders = await get_expired_orders()
+            for order in expired_orders:
+                order_id = order["id"]
+                broker_name = order["broker"]
+                broker_order_id = order["broker_order_id"]
+
+                if broker_name not in execution_engine._brokers or not broker_order_id:
+                    await update_order_status(order_id, "expired")
+                    continue
+
+                broker = execution_engine._brokers[broker_name]
+                try:
+                    success = await broker.cancel_order(broker_order_id)
+                    if success:
+                        await update_order_status(order_id, "expired")
+                        logger.info(f"Cancelled expired order {order_id} (broker order {broker_order_id})")
+                    else:
+                        await update_order_status(order_id, "expired")
+                        logger.debug(f"Order {order_id} already filled or not found, marking as expired")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel expired order {order_id}: {e}")
+                    await update_order_status(order_id, "expired")
+
+        except Exception as e:
+            logger.error(f"Order expiry check error: {e}")
+
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -237,6 +270,9 @@ async def lifespan(app: FastAPI):
     # Start order reconciliation task
     reconciliation_task = asyncio.create_task(periodic_order_reconciliation())
 
+    # Start order expiry task
+    expiry_task = asyncio.create_task(periodic_expire_orders())
+
     # Start signal engine with appropriate feed
     if settings.polymarket_condition_ids:
         from app.feeds.polymarket_feed import PolymarketPriceFeed
@@ -255,7 +291,7 @@ async def lifespan(app: FastAPI):
     await feed.stop()
     signal_engine.stop()
 
-    for task_name, task in [("signal", signal_task), ("sync", sync_task), ("reset", reset_task), ("reconciliation", reconciliation_task)]:
+    for task_name, task in [("signal", signal_task), ("sync", sync_task), ("reset", reset_task), ("reconciliation", reconciliation_task), ("expiry", expiry_task)]:
         task.cancel()
         try:
             await asyncio.wait_for(task, timeout=5.0)

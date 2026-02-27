@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.database import log_order, log_trade_decision, update_order_status, mark_decision_executed
+import datetime
 from app.core.events import Event, event_bus
 from app.core.logging import logger
 from app.engines.llm_brain import TradeAction
+from app.engines.position_sizing import PositionSizer, SizingConfig
 from app.engines.risk_engine import RiskCheckResult, RiskEngine
 
 
@@ -59,6 +61,7 @@ class ExecutionEngine:
         self._brokers: dict[str, BrokerAdapter] = {}
         self._default_broker: str | None = None
         self._portfolio_lock = asyncio.Lock()
+        self._position_sizer = PositionSizer()
 
     def register_broker(self, name: str, adapter: BrokerAdapter, default: bool = False) -> None:
         self._brokers[name] = adapter
@@ -75,9 +78,19 @@ class ExecutionEngine:
             return None
 
         async with self._portfolio_lock:
+            # Apply position sizing if using dynamic method
+            quantity = action.quantity
+            if self._position_sizer.config.method != "fixed":
+                balance = await self.get_balance(broker_name)
+                portfolio_value = balance.get("NetLiquidation", 0) or balance.get("AvailableFunds", 0)
+                if portfolio_value > 0:
+                    sized_qty = self._position_sizer.calculate_quantity(portfolio_value, current_price, action.side)
+                    if sized_qty > 0:
+                        quantity = sized_qty
+                        logger.info(f"Position sized: {action.quantity} -> {quantity} ({self._position_sizer.config.method})")
+
             risk_result = self._risk_engine.check_trade(action, current_price)
 
-            quantity = action.quantity
             if risk_result.adjusted_quantity is not None:
                 quantity = risk_result.adjusted_quantity
 
@@ -106,6 +119,12 @@ class ExecutionEngine:
                 return None
 
             broker = self._brokers[broker_name]
+
+            # Set expiry for LIMIT orders (5 minutes from now)
+            expires_at = None
+            if action.order_type == "LIMIT":
+                expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)).isoformat()
+
             order_id = await log_order(
                 broker=broker_name,
                 symbol=action.symbol,
@@ -114,6 +133,7 @@ class ExecutionEngine:
                 quantity=quantity,
                 decision_id=decision_id,
                 limit_price=action.limit_price,
+                expires_at=expires_at,
             )
 
             result = await broker.place_order(

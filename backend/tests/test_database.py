@@ -293,7 +293,8 @@ async def test_run_migrations_idempotent(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM schema_migrations")
         result = await cursor.fetchone()
-    assert result[0] == 2
+    # Should have 3 migrations total (v1, v2, v3)
+    assert result[0] == 3
 
 
 @pytest.mark.asyncio
@@ -304,7 +305,8 @@ async def test_run_migrations_tracks_version(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
         result = await cursor.fetchone()
-    assert result[0] == 2
+    # Should track v1, v2, v3
+    assert result[0] == 3
 
 
 @pytest.mark.asyncio
@@ -399,3 +401,91 @@ async def test_get_trade_pnl_data(temp_db):
     assert len(trades) > 0
     assert trades[0]["symbol"] == "AAPL"
     assert trades[0]["status"] == "filled"
+
+
+@pytest.mark.asyncio
+async def test_log_order_with_expires_at(temp_db):
+    """Test logging order with expires_at field."""
+    from app.core.database import log_order
+    import datetime
+
+    expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5)).isoformat()
+    order_id = await log_order(
+        broker="ibkr", symbol="AAPL", side="buy",
+        order_type="LIMIT", quantity=10.0, limit_price=150.0,
+        expires_at=expires_at,
+    )
+
+    async with aiosqlite.connect(temp_db) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        row = dict(await cursor.fetchone())
+
+    assert row["expires_at"] is not None
+    assert row["expires_at"] == expires_at
+
+
+@pytest.mark.asyncio
+async def test_get_expired_orders(temp_db):
+    """Test retrieving expired orders."""
+    from app.core.database import get_expired_orders, log_order, update_order_status
+    import datetime
+
+    # Create an order that should be expired (use SQLite-friendly format for comparison)
+    # Note: SQLite's datetime('now') returns format like "2026-02-27 20:58:02"
+    past_time = "2020-01-01T00:00:00"
+    order_id = await log_order(
+        broker="ibkr", symbol="AAPL", side="buy",
+        order_type="LIMIT", quantity=10.0, limit_price=150.0,
+        expires_at=past_time,
+    )
+    await update_order_status(order_id, "pending")
+
+    # Create an order that shouldn't be expired
+    future_time = "2099-12-31T23:59:59"
+    order_id2 = await log_order(
+        broker="ibkr", symbol="GOOGL", side="sell",
+        order_type="LIMIT", quantity=5.0, limit_price=2800.0,
+        expires_at=future_time,
+    )
+    await update_order_status(order_id2, "pending")
+
+    # Get expired orders
+    expired = await get_expired_orders()
+
+    assert len(expired) >= 1
+    # Check that at least one expired order (AAPL) is in the results
+    expired_symbols = [o["symbol"] for o in expired]
+    assert "AAPL" in expired_symbols
+
+
+@pytest.mark.asyncio
+async def test_get_expired_orders_empty(temp_db):
+    """Test get_expired_orders when no orders are expired."""
+    from app.core.database import get_expired_orders, log_order
+    import datetime
+
+    # Create an order with future expiry
+    future_time = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)).isoformat()
+    await log_order(
+        broker="ibkr", symbol="AAPL", side="buy",
+        order_type="LIMIT", quantity=10.0,
+        expires_at=future_time,
+    )
+
+    expired = await get_expired_orders()
+    assert len(expired) == 0
+
+
+@pytest.mark.asyncio
+async def test_migration_adds_expires_at_column(temp_db):
+    """Test that migration 3 adds expires_at column to orders table."""
+    from app.core.database import run_migrations
+    await run_migrations()
+
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute("PRAGMA table_info(orders)")
+        columns = await cursor.fetchall()
+
+    column_names = [col[1] for col in columns]
+    assert "expires_at" in column_names

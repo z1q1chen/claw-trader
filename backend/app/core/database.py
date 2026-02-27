@@ -39,6 +39,7 @@ MIGRATIONS = [
         created_at TEXT DEFAULT (datetime('now'))
     )
 """),
+    (3, "Add expires_at to orders", "ALTER TABLE orders ADD COLUMN expires_at TEXT"),
 ]
 
 
@@ -253,13 +254,14 @@ async def log_order(
     quantity: float,
     decision_id: int | None = None,
     limit_price: float | None = None,
+    expires_at: str | None = None,
 ) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """INSERT INTO orders
-               (broker, symbol, side, order_type, quantity, limit_price, decision_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (broker, symbol, side, order_type, quantity, limit_price, decision_id),
+               (broker, symbol, side, order_type, quantity, limit_price, decision_id, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (broker, symbol, side, order_type, quantity, limit_price, decision_id, expires_at),
         )
         await db.commit()
         return cursor.lastrowid
@@ -496,5 +498,15 @@ async def get_trade_pnl_data() -> list[dict]:
                LEFT JOIN trade_decisions d ON o.decision_id = d.id
                WHERE o.status = 'filled'
                ORDER BY o.created_at"""
+        )).fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_expired_orders() -> list[dict]:
+    """Get orders that have expired (status pending/submitted AND past expiry time)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT * FROM orders WHERE status IN ('pending', 'submitted') AND expires_at IS NOT NULL AND expires_at < datetime('now')"
         )).fetchall()
         return [dict(row) for row in rows]
