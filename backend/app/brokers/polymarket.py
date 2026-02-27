@@ -213,10 +213,14 @@ class PolymarketAdapter(BrokerAdapter):
             return {}
 
         try:
+            import asyncio
+            loop = asyncio.get_running_loop()
             account = w3.eth.account.from_key(self._private_key)
             address = account.address
 
-            pol_balance = w3.eth.get_balance(address)
+            pol_balance = await loop.run_in_executor(
+                None, lambda: w3.eth.get_balance(address)
+            )
             pol_balance_float = float(w3.from_wei(pol_balance, "ether"))
 
             usdc_balance = await self._get_usdc_balance(w3, address)
@@ -226,12 +230,14 @@ class PolymarketAdapter(BrokerAdapter):
                 "POL": pol_balance_float,
                 "USDC.e": usdc_balance,
             }
-        except Exception as e:
+        except Exception:
             return {}
 
     async def _get_usdc_balance(self, w3, address: str) -> float:
         """Query USDC.e (0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174) balance."""
         try:
+            import asyncio
+            loop = asyncio.get_running_loop()
             erc20_abi = [
                 {
                     "constant": True,
@@ -243,7 +249,10 @@ class PolymarketAdapter(BrokerAdapter):
             ]
 
             contract = w3.eth.contract(address=w3.to_checksum_address(USDC_E), abi=erc20_abi)
-            balance = contract.functions.balanceOf(w3.to_checksum_address(address)).call()
+            balance = await loop.run_in_executor(
+                None,
+                lambda: contract.functions.balanceOf(w3.to_checksum_address(address)).call()
+            )
 
             return float(balance) / (10 ** 6)
         except Exception:

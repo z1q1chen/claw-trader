@@ -47,6 +47,7 @@ export default function Dashboard() {
     max_portfolio_exposure_usd: 0,
     max_single_trade_usd: 0,
     max_drawdown_pct: 0,
+    max_position_concentration_pct: 20,
   });
   const [signals, setSignals] = useState<Signal[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
@@ -128,12 +129,23 @@ export default function Dashboard() {
   const saveLLMConfig = async () => {
     setLlmStatus(null);
     try {
-      await api.updateLLMConfig({
+      // If the key looks masked (contains •), user didn't change it - keep the existing key on the server
+      const apiKey = llmConfig.api_key.includes("•") ? "" : llmConfig.api_key;
+      if (!apiKey && !llmConfig.api_key.includes("•")) {
+        setLlmStatus("Error: API key is required");
+        return;
+      }
+      const payload: Record<string, string> = {
         provider: llmConfig.provider,
         model_name: llmConfig.model_name,
-        api_key: llmConfig.api_key,
-        base_url: llmConfig.base_url || undefined,
-      });
+      };
+      if (apiKey) {
+        payload.api_key = apiKey;
+      }
+      if (llmConfig.base_url) {
+        payload.base_url = llmConfig.base_url;
+      }
+      await api.updateLLMConfig(payload as any);
       setLlmStatus("Configuration saved");
       refreshData();
     } catch (e: any) {
@@ -430,6 +442,17 @@ export default function Dashboard() {
               value={riskConfig.max_drawdown_pct || ""}
               onChange={(e) =>
                 setRiskConfig({ ...riskConfig, max_drawdown_pct: parseFloat(e.target.value) || 0 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>Max Position Concentration (%)</label>
+            <input
+              className="input"
+              type="number"
+              value={riskConfig.max_position_concentration_pct || ""}
+              onChange={(e) =>
+                setRiskConfig({ ...riskConfig, max_position_concentration_pct: parseFloat(e.target.value) || 0 })
               }
             />
           </div>

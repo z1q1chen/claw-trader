@@ -86,6 +86,7 @@ export interface RiskConfig {
   max_portfolio_exposure_usd: number;
   max_single_trade_usd: number;
   max_drawdown_pct: number;
+  max_position_concentration_pct: number;
 }
 
 export interface Signal {

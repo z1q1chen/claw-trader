@@ -19,9 +19,9 @@ router = APIRouter()
 # --- Pydantic models ---
 
 class LLMConfigRequest(BaseModel):
-    provider: str  # "gemini", "openai", "local"
+    provider: str  # "gemini", "openai", "local", "anthropic"
     model_name: str
-    api_key: str
+    api_key: str | None = None
     base_url: str | None = None
 
 
@@ -31,6 +31,7 @@ class RiskConfigRequest(BaseModel):
     max_portfolio_exposure_usd: float | None = None
     max_single_trade_usd: float | None = None
     max_drawdown_pct: float | None = None
+    max_position_concentration_pct: float | None = None
 
 
 class KillSwitchRequest(BaseModel):
@@ -51,6 +52,13 @@ class BrokerConnectRequest(BaseModel):
 
 # --- LLM Config ---
 
+def _mask_key(key: str) -> str:
+    """Mask API key, showing only last 4 characters."""
+    if not key or len(key) <= 4:
+        return key
+    return "•" * (len(key) - 4) + key[-4:]
+
+
 @router.get("/api/llm/config")
 async def get_llm_config():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -60,23 +68,36 @@ async def get_llm_config():
         )
         row = await cursor.fetchone()
         if row:
-            return dict(row)
+            config = dict(row)
+            config["api_key"] = _mask_key(config.get("api_key", ""))
+            return config
         return {"provider": "gemini", "model_name": "gemini-2.0-flash", "api_key": "", "base_url": "", "is_active": True}
 
 
 @router.post("/api/llm/config")
 async def update_llm_config(req: LLMConfigRequest):
     async with aiosqlite.connect(DB_PATH) as db:
+        # If no api_key provided, keep the existing one
+        api_key = req.api_key
+        if not api_key:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT api_key FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            api_key = row["api_key"] if row else ""
+
         await db.execute("UPDATE llm_config SET is_active = 0")
         await db.execute(
             """INSERT INTO llm_config (provider, model_name, api_key, base_url, is_active)
                VALUES (?, ?, ?, ?, 1)""",
-            (req.provider, req.model_name, req.api_key, req.base_url or ""),
+            (req.provider, req.model_name, api_key, req.base_url or ""),
         )
         await db.commit()
 
-    # Reconfigure the brain (will be wired in main.py)
-    await event_bus.publish(Event(type="llm_config_changed", data=req.model_dump()))
+    data = req.model_dump()
+    data["api_key"] = api_key  # Use the resolved key for brain reconfiguration
+    await event_bus.publish(Event(type="llm_config_changed", data=data))
     return {"status": "ok"}
 
 
@@ -210,6 +231,7 @@ async def get_risk_config():
         "max_portfolio_exposure_usd": settings.max_portfolio_exposure_usd,
         "max_single_trade_usd": settings.max_single_trade_usd,
         "max_drawdown_pct": settings.max_drawdown_pct,
+        "max_position_concentration_pct": settings.max_position_concentration_pct,
     }
 
 
@@ -226,6 +248,8 @@ async def update_risk_config(req: RiskConfigRequest):
         errors.append("max_single_trade_usd must be positive")
     if req.max_drawdown_pct is not None and (req.max_drawdown_pct <= 0 or req.max_drawdown_pct > 100):
         errors.append("max_drawdown_pct must be between 0 and 100")
+    if req.max_position_concentration_pct is not None and (req.max_position_concentration_pct <= 0 or req.max_position_concentration_pct > 100):
+        errors.append("max_position_concentration_pct must be between 0 and 100")
     if errors:
         raise HTTPException(status_code=422, detail=errors)
 
@@ -239,6 +263,8 @@ async def update_risk_config(req: RiskConfigRequest):
         settings.max_single_trade_usd = req.max_single_trade_usd
     if req.max_drawdown_pct is not None:
         settings.max_drawdown_pct = req.max_drawdown_pct
+    if req.max_position_concentration_pct is not None:
+        settings.max_position_concentration_pct = req.max_position_concentration_pct
 
     await save_risk_config(
         settings.max_position_usd,

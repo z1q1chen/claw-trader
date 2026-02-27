@@ -169,3 +169,17 @@ class TestPositionEndpoints:
             mock_exec.get_all_positions = AsyncMock(return_value={})
             response = client.get("/api/positions/all")
             assert response.status_code == 200
+
+
+def test_mask_key():
+    from app.api.routes import _mask_key
+    assert _mask_key("") == ""
+    assert _mask_key("abcd") == "abcd"
+    assert _mask_key("sk-abc123xyz") == "••••••••3xyz"
+    assert _mask_key("12345678") == "••••5678"
+
+
+def test_mask_key_short():
+    from app.api.routes import _mask_key
+    assert _mask_key("ab") == "ab"
+    assert _mask_key("abc") == "abc"
