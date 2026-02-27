@@ -174,3 +174,95 @@ class TestPositionSizer:
             side="buy"
         )
         assert qty == config.fixed_quantity
+
+    def test_calculate_quantity_with_zero_portfolio_value(self):
+        """Test edge case: portfolio_value=0 should fall back to fixed quantity."""
+        config = SizingConfig(
+            method="fixed_fractional",
+            fixed_quantity=50.0,
+            portfolio_fraction=0.02
+        )
+        sizer = PositionSizer(config)
+
+        qty = sizer.calculate_quantity(
+            portfolio_value=0,
+            current_price=100.0,
+            side="buy"
+        )
+        assert qty == 50.0
+
+    def test_calculate_quantity_with_zero_price(self):
+        """Test edge case: price=0 should fall back to fixed quantity."""
+        config = SizingConfig(
+            method="fixed_fractional",
+            fixed_quantity=50.0,
+            portfolio_fraction=0.02
+        )
+        sizer = PositionSizer(config)
+
+        qty = sizer.calculate_quantity(
+            portfolio_value=100000,
+            current_price=0,
+            side="buy"
+        )
+        assert qty == 50.0
+
+    def test_kelly_criterion_negative_edge(self):
+        """Test kelly criterion with negative expected value returns minimum position."""
+        config = SizingConfig(
+            method="kelly",
+            kelly_win_rate=0.40,
+            kelly_avg_win=1.0,
+            kelly_avg_loss=3.0,
+            max_position_pct=0.20
+        )
+        sizer = PositionSizer(config)
+
+        qty = sizer.calculate_quantity(
+            portfolio_value=100000,
+            current_price=100.0,
+            side="buy"
+        )
+        # Should return minimum position due to negative kelly
+        assert qty >= 0.01
+        assert isinstance(qty, float)
+
+    def test_kelly_criterion_win_rate_one(self):
+        """Test kelly criterion with 100% win rate."""
+        config = SizingConfig(
+            method="kelly",
+            kelly_win_rate=1.0,
+            kelly_avg_win=2.0,
+            kelly_avg_loss=1.0,
+            max_position_pct=0.20
+        )
+        sizer = PositionSizer(config)
+
+        qty = sizer.calculate_quantity(
+            portfolio_value=100000,
+            current_price=100.0,
+            side="buy"
+        )
+        # Should return a position
+        assert qty > 0.01
+        assert isinstance(qty, float)
+
+    def test_kelly_criterion_win_rate_zero(self):
+        """Test kelly criterion with 0% win rate."""
+        config = SizingConfig(
+            method="kelly",
+            kelly_win_rate=0.0,
+            kelly_avg_win=2.0,
+            kelly_avg_loss=1.0,
+            max_position_pct=0.20
+        )
+        sizer = PositionSizer(config)
+
+        qty = sizer.calculate_quantity(
+            portfolio_value=100000,
+            current_price=100.0,
+            side="buy"
+        )
+        # Should return minimum position
+        assert qty >= 0.01
+        assert isinstance(qty, float)

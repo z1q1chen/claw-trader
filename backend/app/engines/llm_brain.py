@@ -264,6 +264,8 @@ class LLMBrain:
         self._daily_pnl: float = 0.0
         self._total_exposure: float = 0.0
         self._call_semaphore = asyncio.Semaphore(1)
+        self._last_call_success: bool = False
+        self._last_call_error: str | None = None
 
     def configure(self, provider: str, model: str, api_key: str, base_url: str | None = None) -> None:
         self._provider_name = provider
@@ -284,6 +286,23 @@ class LLMBrain:
         self._positions = positions
         self._daily_pnl = daily_pnl
         self._total_exposure = total_exposure
+
+    async def health_check(self) -> dict:
+        """Return health status of the LLM brain."""
+        if self._provider is None:
+            return {
+                "status": "not_configured",
+                "configured": False,
+            }
+
+        return {
+            "status": "ok" if self._last_call_success else "degraded",
+            "configured": True,
+            "provider": self._provider_name,
+            "model": self._model_name,
+            "last_call_success": self._last_call_success,
+            "last_call_error": self._last_call_error,
+        }
 
     async def decide(self, signal_event: Event) -> TradeAction | None:
         if self._provider is None:
@@ -346,6 +365,8 @@ class LLMBrain:
                 decision = json.loads(response.content)
             except (json.JSONDecodeError, ValueError) as e:
                 logger.warning(f"LLM returned invalid JSON: {e}. Raw: {response.content[:200]}")
+                self._last_call_success = False
+                self._last_call_error = f"Invalid JSON response: {str(e)}"
                 return None
 
             await event_bus.publish(Event(
@@ -353,6 +374,9 @@ class LLMBrain:
                 data={"decision": decision, "signal": data,
                       "latency_ms": response.latency_ms}
             ))
+
+            self._last_call_success = True
+            self._last_call_error = None
 
             if decision.get("action") == "hold":
                 return None
@@ -369,6 +393,8 @@ class LLMBrain:
             )
         except Exception as e:
             logger.error(f"LLM Brain error: {e}")
+            self._last_call_success = False
+            self._last_call_error = str(e)
             return None
 
     def _estimate_cost(self, response: LLMResponse) -> float:

@@ -80,10 +80,43 @@ class KillSwitchRequest(BaseModel):
 
 class ManualTradeRequest(BaseModel):
     symbol: str
-    side: str  # "buy" or "sell"
+    side: str
     quantity: float
-    price: float = 0.0  # estimated current price
+    price: float | None = None
     broker: str | None = None
+    order_type: str = "MARKET"
+    limit_price: float | None = None
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Normalize and validate symbol
+        if not self.symbol or not self.symbol.strip():
+            raise ValueError("symbol is required and cannot be empty")
+        if len(self.symbol) > 100:
+            raise ValueError("symbol must be at most 100 characters")
+
+        # Normalize and validate side
+        self.side = self.side.upper()
+        if self.side not in ("BUY", "SELL"):
+            raise ValueError('side must be "BUY" or "SELL"')
+
+        # Validate quantity
+        if self.quantity <= 0:
+            raise ValueError("quantity must be positive (greater than 0)")
+
+        # Validate price if provided
+        if self.price is not None and self.price < 0:
+            raise ValueError("price must be non-negative if provided")
+
+        # Validate order_type
+        if self.order_type not in ("MARKET", "LIMIT"):
+            raise ValueError('order_type must be "MARKET" or "LIMIT"')
+
+        # Validate limit_price
+        if self.order_type == "LIMIT" and self.limit_price is None:
+            raise ValueError("limit_price is required when order_type is LIMIT")
+        if self.limit_price is not None and self.limit_price < 0:
+            raise ValueError("limit_price must be non-negative if provided")
 
 
 class BrokerConnectRequest(BaseModel):
@@ -116,24 +149,33 @@ async def get_llm_config():
 
 @router.post("/api/llm/config")
 async def update_llm_config(req: LLMConfigRequest):
-    async with aiosqlite.connect(DB_PATH) as db:
-        # If no api_key provided, keep the existing one
-        api_key = req.api_key
-        if not api_key:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT api_key FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
-            )
-            row = await cursor.fetchone()
-            api_key = row["api_key"] if row else ""
+    from app.core.database import _write_lock
 
-        await db.execute("UPDATE llm_config SET is_active = 0")
-        await db.execute(
-            """INSERT INTO llm_config (provider, model_name, api_key, base_url, is_active)
-               VALUES (?, ?, ?, ?, 1)""",
-            (req.provider, req.model_name, api_key, req.base_url or ""),
-        )
-        await db.commit()
+    async with _write_lock:
+        async with aiosqlite.connect(DB_PATH) as db:
+            # If no api_key provided, keep the existing one
+            api_key = req.api_key
+            if not api_key:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT api_key FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+                )
+                row = await cursor.fetchone()
+                api_key = row["api_key"] if row else ""
+
+            try:
+                await db.execute("BEGIN")
+                await db.execute("UPDATE llm_config SET is_active = 0")
+                await db.execute(
+                    """INSERT INTO llm_config (provider, model_name, api_key, base_url, is_active)
+                       VALUES (?, ?, ?, ?, 1)""",
+                    (req.provider, req.model_name, api_key, req.base_url or ""),
+                )
+                await db.execute("COMMIT")
+            except Exception as e:
+                await db.execute("ROLLBACK")
+                logger.error(f"Failed to save LLM config: {e}")
+                raise
 
     data = req.model_dump()
     data["api_key"] = api_key  # Use the resolved key for brain reconfiguration
@@ -456,34 +498,30 @@ async def manual_trade(req: ManualTradeRequest):
     from app.engines.llm_brain import TradeAction
     from app.core.logging import logger
 
-    if req.quantity <= 0:
-        raise HTTPException(status_code=422, detail="Quantity must be positive")
-    if req.side not in ("buy", "sell"):
-        raise HTTPException(status_code=422, detail="Side must be 'buy' or 'sell'")
-    if not req.symbol.strip():
-        raise HTTPException(status_code=422, detail="Symbol is required")
+    try:
+        action = TradeAction(
+            symbol=req.symbol,
+            side=req.side,
+            quantity=req.quantity,
+            reasoning="Manual trade via dashboard",
+            confidence=1.0,
+            strategy="manual",
+        )
 
-    action = TradeAction(
-        symbol=req.symbol,
-        side=req.side,
-        quantity=req.quantity,
-        reasoning="Manual trade via dashboard",
-        confidence=1.0,
-        strategy="manual",
-    )
-
-    # Use the price from request; in production this would come from market data
-    result = await execution_engine.execute_trade(action, current_price=req.price, broker_name=req.broker)
-    if result is None:
-        raise HTTPException(status_code=400, detail="Trade rejected by risk engine or no broker available")
-    if not result.success:
-        raise HTTPException(status_code=400, detail=result.error or "Trade failed")
-    return {
-        "status": "ok",
-        "broker_order_id": result.broker_order_id,
-        "filled_price": result.filled_price,
-        "filled_quantity": result.filled_quantity,
-    }
+        # Use the price from request; in production this would come from market data
+        result = await execution_engine.execute_trade(action, current_price=req.price or 0.0, broker_name=req.broker)
+        if result is None:
+            raise HTTPException(status_code=400, detail="Trade rejected by risk engine or no broker available")
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error or "Trade failed")
+        return {
+            "status": "ok",
+            "broker_order_id": result.broker_order_id,
+            "filled_price": result.filled_price,
+            "filled_quantity": result.filled_quantity,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 class CancelOrderRequest(BaseModel):

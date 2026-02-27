@@ -840,6 +840,161 @@ class TestStrategyPresets:
         assert "nonexistent" in data["detail"]
 
 
+class TestManualTradeValidation:
+    """Test manual trade request validation."""
+
+    def test_manual_trade_invalid_empty_symbol(self, client):
+        """Test that empty symbol is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            resp = client.post("/api/trade", json={
+                "symbol": "",
+                "side": "buy",
+                "quantity": 10.0,
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_invalid_symbol_too_long(self, client):
+        """Test that symbol longer than 100 chars is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            long_symbol = "A" * 101
+            resp = client.post("/api/trade", json={
+                "symbol": long_symbol,
+                "side": "buy",
+                "quantity": 10.0,
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_invalid_side(self, client):
+        """Test that invalid side is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "invalid",
+                "quantity": 10.0,
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_negative_quantity(self, client):
+        """Test that negative quantity is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": -10.0,
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_zero_quantity(self, client):
+        """Test that zero quantity is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 0.0,
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_negative_price(self, client):
+        """Test that negative price is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 10.0,
+                "price": -100.0,
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_valid_buy(self, client):
+        """Test valid buy trade request."""
+        with patch("app.main.execution_engine") as mock_exec, \
+             patch("app.engines.llm_brain.TradeAction"):
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.broker_order_id = "order123"
+            mock_result.filled_price = 150.0
+            mock_result.filled_quantity = 10.0
+            mock_exec.execute_trade = AsyncMock(return_value=mock_result)
+
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 10.0,
+                "price": 150.0,
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+
+    def test_manual_trade_normalizes_side_to_uppercase(self, client):
+        """Test that side is normalized to uppercase."""
+        with patch("app.main.execution_engine") as mock_exec, \
+             patch("app.engines.llm_brain.TradeAction") as mock_action:
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.broker_order_id = "order123"
+            mock_result.filled_price = 150.0
+            mock_result.filled_quantity = 10.0
+            mock_exec.execute_trade = AsyncMock(return_value=mock_result)
+
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "sell",
+                "quantity": 10.0,
+            })
+            assert resp.status_code == 200
+            # Verify that the action was created with uppercase side
+            args, kwargs = mock_action.call_args
+            assert kwargs["side"] == "SELL"
+
+    def test_manual_trade_limit_order_missing_limit_price(self, client):
+        """Test that LIMIT order without limit_price is rejected."""
+        with patch("app.main.execution_engine") as mock_exec:
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 10.0,
+                "order_type": "LIMIT",
+            })
+            assert resp.status_code == 422
+
+    def test_manual_trade_market_order_default(self, client):
+        """Test that order_type defaults to MARKET."""
+        with patch("app.main.execution_engine") as mock_exec, \
+             patch("app.engines.llm_brain.TradeAction"):
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.broker_order_id = "order123"
+            mock_result.filled_price = 150.0
+            mock_result.filled_quantity = 10.0
+            mock_exec.execute_trade = AsyncMock(return_value=mock_result)
+
+            resp = client.post("/api/trade", json={
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 10.0,
+            })
+            assert resp.status_code == 200
+
+
+class TestLLMConfigMasking:
+    """Test that LLM API key is properly masked in GET response."""
+
+    def test_get_llm_config_masks_api_key(self, client):
+        """Test that GET /api/config/llm masks the API key."""
+        from app.api.routes import _mask_key
+
+        # Test the masking function directly
+        full_key = "sk-1234567890abcdefghijklmnopqrstuv"
+        masked = _mask_key(full_key)
+        # API key should be masked, showing only last 4 characters
+        assert masked.endswith("stuv")
+        # Should have bullet points
+        assert masked.startswith("•")
+        # Full key should not be in masked version
+        assert "1234567890" not in masked
+
+
 class TestSignalConfigEndpoints:
     def test_get_signal_config(self, client):
         """Test GET /api/config/signal returns current config."""

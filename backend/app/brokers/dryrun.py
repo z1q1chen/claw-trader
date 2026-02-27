@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
 import random
 import time
+from pathlib import Path
 from typing import Any
 
 from app.engines.execution_engine import BrokerAdapter, OrderResult
 from app.core.logging import logger
+
+STATE_FILE = Path("/tmp/claw-trader/data/dryrun_state.json")
 
 
 class DryRunBrokerAdapter(BrokerAdapter):
@@ -17,7 +21,39 @@ class DryRunBrokerAdapter(BrokerAdapter):
         self._order_counter: int = 0
         self._order_history: list[dict[str, Any]] = []
         self._last_prices: dict[str, float] = {}
-        logger.info("DryRun broker initialized with $100,000 virtual balance")
+        self.load_state()
+        logger.info(f"DryRun broker initialized with ${self._balance:,.2f} virtual balance")
+
+    def load_state(self) -> None:
+        """Load broker state from persistent storage."""
+        try:
+            if STATE_FILE.exists():
+                with open(STATE_FILE, "r") as f:
+                    state = json.load(f)
+                    self._balance = state.get("balance", 100000.0)
+                    self._positions = state.get("positions", {})
+                    self._order_history = state.get("orders", [])
+                    self._order_counter = state.get("order_counter", 0)
+                    logger.info(f"Loaded DryRun state from {STATE_FILE}: balance=${self._balance:,.2f}, {len(self._positions)} positions")
+            else:
+                logger.debug(f"No persisted state found at {STATE_FILE}, starting fresh")
+        except Exception as e:
+            logger.warning(f"Failed to load DryRun state: {e}, starting with defaults")
+
+    def save_state(self) -> None:
+        """Save broker state to persistent storage."""
+        try:
+            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            state = {
+                "balance": self._balance,
+                "positions": self._positions,
+                "orders": self._order_history,
+                "order_counter": self._order_counter,
+            }
+            with open(STATE_FILE, "w") as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save DryRun state: {e}")
 
     def set_price(self, symbol: str, price: float) -> None:
         """Update last known price for a symbol (called during portfolio sync)."""
@@ -70,6 +106,7 @@ class DryRunBrokerAdapter(BrokerAdapter):
         })
 
         logger.info(f"[DRY RUN] {side} {quantity} {symbol} @ {filled_price:.4f} (order {order_id})")
+        self.save_state()
 
         return OrderResult(
             success=True,

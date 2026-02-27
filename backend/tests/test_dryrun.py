@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import json
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.brokers.dryrun import DryRunBrokerAdapter
+from app.brokers.dryrun import DryRunBrokerAdapter, STATE_FILE
 
 
 @pytest.fixture
 def dryrun_broker() -> DryRunBrokerAdapter:
-    return DryRunBrokerAdapter()
+    # Clean up state file before creating broker to ensure fresh state
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
+    broker = DryRunBrokerAdapter()
+    yield broker
+    # Clean up state file after test
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
 
 
 @pytest.mark.asyncio
@@ -270,3 +278,52 @@ async def test_unrealized_pnl_negative_on_price_decline(dryrun_broker: DryRunBro
     expected_pnl = pos["market_value"] - (pos["quantity"] * pos["avg_cost"])
     assert pos["unrealized_pnl"] == pytest.approx(expected_pnl, abs=1.0)
     assert pos["unrealized_pnl"] < 0  # Should be negative (loss)
+
+
+@pytest.mark.asyncio
+async def test_state_persistence_save_and_load() -> None:
+    """Test that broker state is persisted to JSON and can be restored."""
+    # Clean up any existing state file
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
+
+    # Create first broker instance and place orders
+    broker1 = DryRunBrokerAdapter()
+    initial_balance = broker1._balance
+
+    # Place orders to change state
+    await broker1.place_order("AAPL", "BUY", 10.0, limit_price=150.0)
+    await broker1.place_order("MSFT", "BUY", 5.0, limit_price=300.0)
+
+    # Get state after orders
+    positions_after_orders = await broker1.get_positions()
+    balance_after_orders = broker1._balance
+    order_count_after = broker1._order_counter
+
+    # Verify state file exists
+    assert STATE_FILE.exists()
+
+    # Verify state file contains correct data
+    with open(STATE_FILE, "r") as f:
+        saved_state = json.load(f)
+    assert saved_state["balance"] == balance_after_orders
+    assert len(saved_state["positions"]) == 2
+    assert saved_state["order_counter"] == order_count_after
+
+    # Create new broker instance (should load persisted state)
+    broker2 = DryRunBrokerAdapter()
+
+    # Verify state was restored
+    assert broker2._balance == balance_after_orders
+    assert len(broker2._positions) == 2
+    assert broker2._order_counter == order_count_after
+
+    # Verify positions match
+    positions_restored = await broker2.get_positions()
+    assert positions_restored.keys() == positions_after_orders.keys()
+    for symbol in positions_restored.keys():
+        assert positions_restored[symbol]["quantity"] == positions_after_orders[symbol]["quantity"]
+
+    # Clean up
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()

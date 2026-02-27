@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
@@ -56,6 +57,7 @@ class RiskEngine:
         self._daily_pnl_start: float = 0.0
         self._peak_portfolio_value: float = 0.0
         self._return_history: list[float] = []
+        self._reset_lock = threading.Lock()
 
     @property
     def kill_switch_active(self) -> bool:
@@ -173,9 +175,11 @@ class RiskEngine:
 
     def reset_daily(self) -> None:
         """Reset daily P&L tracking. Call at market open or midnight."""
-        self._portfolio.daily_pnl_usd = 0.0
-        self._portfolio.max_drawdown_pct = 0.0
-        self._peak_portfolio_value = self._portfolio.total_exposure_usd
-        if self._kill_switch:
-            self.deactivate_kill_switch()
-        logger.info("Risk engine: daily metrics reset")
+        with self._reset_lock:
+            logger.info(f"Resetting daily metrics. Current daily PnL: ${self._portfolio.daily_pnl_usd:.2f}")
+            self._portfolio.daily_pnl_usd = 0.0
+            self._portfolio.max_drawdown_pct = 0.0
+            self._peak_portfolio_value = self._portfolio.total_exposure_usd
+            if self._kill_switch:
+                self.deactivate_kill_switch()
+            logger.info("Risk engine: daily metrics reset")

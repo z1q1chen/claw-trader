@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -93,6 +94,41 @@ class TestVerifyRequest:
             mock_settings.api_secret_key = "required_key"
             result = await verify_request(request)
             assert result is False
+
+    async def test_verify_request_uses_hmac_compare_digest(self):
+        """Test that timing-safe comparison (hmac.compare_digest) is used."""
+        test_key = "test_secret_key"
+        request = MagicMock()
+        request.headers.get = MagicMock(side_effect=lambda h, default="": f"Bearer {test_key}" if h == "authorization" else "")
+
+        with patch("app.core.auth.settings") as mock_settings, \
+             patch("app.core.auth.hmac.compare_digest", wraps=hmac.compare_digest) as mock_compare_digest:
+            mock_settings.api_secret_key = test_key
+            result = await verify_request(request)
+            assert result is True
+            mock_compare_digest.assert_called_once()
+
+    async def test_verify_request_bearer_and_x_api_key_both_work(self):
+        """Test that both Bearer token and X-API-Key headers work correctly."""
+        test_key = "valid_key"
+
+        # Test Bearer token
+        request_bearer = MagicMock()
+        request_bearer.headers.get = MagicMock(side_effect=lambda h, default="": f"Bearer {test_key}" if h == "authorization" else "")
+
+        with patch("app.core.auth.settings") as mock_settings:
+            mock_settings.api_secret_key = test_key
+            result = await verify_request(request_bearer)
+            assert result is True
+
+        # Test X-API-Key
+        request_api_key = MagicMock()
+        request_api_key.headers.get = MagicMock(side_effect=lambda h, default="": test_key if h == "x-api-key" else "")
+
+        with patch("app.core.auth.settings") as mock_settings:
+            mock_settings.api_secret_key = test_key
+            result = await verify_request(request_api_key)
+            assert result is True
 
 
 @pytest.mark.asyncio

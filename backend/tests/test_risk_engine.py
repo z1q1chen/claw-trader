@@ -6,6 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
+import threading
+import time
 from app.engines.risk_engine import RiskEngine, RiskCheckResult, PortfolioState
 from app.engines.llm_brain import TradeAction
 from app.core.config import settings
@@ -235,6 +237,39 @@ class TestRiskEngineResetDaily:
         # After reset, peak should be set to current exposure
         risk_engine.reset_daily()
         assert risk_engine._peak_portfolio_value == 3000.0
+
+    def test_reset_daily_thread_safety(self, risk_engine):
+        """reset_daily() should be thread-safe with concurrent calls."""
+        risk_engine.update_portfolio({"AAPL": 5000}, -1000.0)
+        initial_daily_pnl = risk_engine._portfolio.daily_pnl_usd
+        assert initial_daily_pnl == -1000.0
+
+        reset_count = 0
+        errors = []
+
+        def reset_thread():
+            nonlocal reset_count
+            try:
+                risk_engine.reset_daily()
+                reset_count += 1
+            except Exception as e:
+                errors.append(str(e))
+
+        # Launch multiple threads calling reset_daily concurrently
+        threads = [threading.Thread(target=reset_thread) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+
+        # Should have no errors
+        assert len(errors) == 0
+
+        # Daily PnL should be reset exactly once
+        assert risk_engine._portfolio.daily_pnl_usd == 0.0
+
+        # All threads should have completed
+        assert reset_count == 5
 
 
 class TestRiskEngineUpdatePortfolio:
