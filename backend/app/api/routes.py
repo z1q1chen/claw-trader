@@ -559,10 +559,9 @@ async def websocket_endpoint(ws: WebSocket):
                 except ValueError as e:
                     logger.warning(f"WebSocket: Value error processing message: {e}")
                     continue
+                except WebSocketDisconnect:
+                    raise
                 except Exception as e:
-                    # Don't catch WebSocketDisconnect - let it propagate
-                    if type(e).__name__ == "WebSocketDisconnect":
-                        raise
                     logger.warning(f"WebSocket receive_loop error: {e}")
                     continue
 

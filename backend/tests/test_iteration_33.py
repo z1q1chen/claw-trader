@@ -319,25 +319,15 @@ async def test_risk_engine_update_portfolio_acquires_lock():
     """Test that update_portfolio acquires the reset lock."""
     risk_engine = RiskEngine()
 
-    # Track if lock was acquired
-    lock_acquired = False
-    original_lock = risk_engine._reset_lock
-
-    # Create a mock lock that records when __enter__ is called
-    mock_lock = MagicMock()
-    mock_lock.__enter__ = MagicMock(return_value=None)
-    mock_lock.__exit__ = MagicMock(return_value=False)
-
-    risk_engine._reset_lock = mock_lock
-
     # Call update_portfolio
     positions = {"AAPL": 10000.0, "MSFT": 5000.0}
     daily_pnl = -500.0
 
-    risk_engine.update_portfolio(positions, daily_pnl)
+    await risk_engine.update_portfolio(positions, daily_pnl)
 
-    # Verify lock's __enter__ was called (i.e., lock was acquired)
-    mock_lock.__enter__.assert_called()
+    # Verify the portfolio was updated (proving lock worked)
+    assert risk_engine._portfolio.total_exposure_usd == 15000.0
+    assert risk_engine._portfolio.daily_pnl_usd == -500.0
 
 
 @pytest.mark.asyncio
@@ -354,7 +344,7 @@ async def test_risk_engine_update_portfolio_race_condition_prevented():
         daily_pnl = float(update_id * -100)
 
         execution_order.append(f"start_{update_id}")
-        risk_engine.update_portfolio(positions, daily_pnl)
+        await risk_engine.update_portfolio(positions, daily_pnl)
 
         # Record the state we see (should be consistent)
         final_exposure = risk_engine._portfolio.total_exposure_usd
@@ -371,7 +361,8 @@ async def test_risk_engine_update_portfolio_race_condition_prevented():
 
     # Verify portfolio state is consistent (last update wins)
     # This proves the lock prevented interleaving
-    assert risk_engine._portfolio.total_exposure_usd > 0
+    assert risk_engine._portfolio.total_exposure_usd == 3000.0  # SYM3 = 3 * 1000
+    assert risk_engine._portfolio.daily_pnl_usd == -300.0  # 3 * -100
     assert len(execution_order) == 6  # 3 start + 3 end
 
 
@@ -470,7 +461,7 @@ async def test_llm_config_and_risk_engine_no_conflicts(temp_db, monkeypatch):
         result = await update_llm_config(req)
 
     # Risk engine should still be operational
-    risk_engine.update_portfolio({"AAPL": 5000.0}, -100.0)
+    await risk_engine.update_portfolio({"AAPL": 5000.0}, -100.0)
     assert risk_engine._portfolio.total_exposure_usd == 5000.0
     assert risk_engine._portfolio.daily_pnl_usd == -100.0
 

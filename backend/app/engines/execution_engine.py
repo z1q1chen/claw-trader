@@ -95,7 +95,7 @@ class ExecutionEngine:
                         quantity = sized_qty
                         logger.info(f"Position sized: {action.quantity} -> {quantity} ({self._position_sizer.config.method})")
 
-            risk_result = self._risk_engine.check_trade(action, current_price)
+            risk_result = await self._risk_engine.check_trade(action, current_price)
 
             if risk_result.adjusted_quantity is not None:
                 quantity = risk_result.adjusted_quantity

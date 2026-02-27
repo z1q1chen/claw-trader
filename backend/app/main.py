@@ -101,7 +101,16 @@ async def periodic_daily_reset() -> None:
         tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
         seconds_until_midnight = (tomorrow - now).total_seconds()
         await asyncio.sleep(seconds_until_midnight)
-        risk_engine.reset_daily()
+
+        # Record daily return before resetting
+        snapshot = risk_engine.get_risk_snapshot()
+        daily_pnl = snapshot["daily_pnl_usd"]
+        total_exposure = snapshot["total_exposure_usd"]
+        if total_exposure > 0 and daily_pnl != 0:
+            daily_return_pct = daily_pnl / total_exposure * 100
+            risk_engine.add_return(daily_return_pct)
+
+        await risk_engine.reset_daily()
         logger.info("Daily risk metrics reset at midnight UTC")
 
 
@@ -140,14 +149,8 @@ async def periodic_portfolio_sync() -> None:
 
                     balance = await broker.get_balance()
                     daily_pnl = balance.get("UnrealizedPnL", 0) + balance.get("RealizedPnL", 0)
-                    risk_engine.update_portfolio(exposure_map, daily_pnl)
+                    await risk_engine.update_portfolio(exposure_map, daily_pnl)
                     llm_brain.set_portfolio_context(exposure_map, daily_pnl, sum(exposure_map.values()))
-
-                    # Track returns for VaR calculation
-                    total_exposure = sum(exposure_map.values())
-                    if total_exposure > 0 and daily_pnl != 0:
-                        daily_return_pct = daily_pnl / total_exposure * 100
-                        risk_engine.add_return(daily_return_pct)
 
                     # Update Kelly parameters from live trading stats
                     if execution_engine._position_sizer and execution_engine._position_sizer.config.method == "kelly":

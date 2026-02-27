@@ -38,10 +38,11 @@ class FakeLLMProviderForTestsBase(LLMProvider):
 class TestRiskEngineCheckTradeLock:
     """Tests for check_trade lock acquisition."""
 
-    def test_check_trade_with_lock_present(self):
+    @pytest.mark.asyncio
+    async def test_check_trade_with_lock_present(self):
         """Verify check_trade has access to _reset_lock."""
         risk_engine = RiskEngine()
-        risk_engine.update_portfolio({}, 0.0)
+        await risk_engine.update_portfolio({}, 0.0)
 
         # Verify the lock exists
         assert hasattr(risk_engine, '_reset_lock')
@@ -56,15 +57,16 @@ class TestRiskEngineCheckTradeLock:
             strategy="test",
         )
 
-        result = risk_engine.check_trade(trade_action, current_price=100.0)
+        result = await risk_engine.check_trade(trade_action, current_price=100.0)
 
         # Result should be valid
         assert result.passed is True
 
-    def test_check_trade_with_concurrent_portfolio_updates(self):
+    @pytest.mark.asyncio
+    async def test_check_trade_with_concurrent_portfolio_updates(self):
         """Test check_trade reading consistent state during portfolio updates."""
         risk_engine = RiskEngine()
-        risk_engine.update_portfolio({"AAPL": 5000.0}, 0.0)
+        await risk_engine.update_portfolio({"AAPL": 5000.0}, 0.0)
 
         trade_action = TradeAction(
             symbol="MSFT",
@@ -78,33 +80,27 @@ class TestRiskEngineCheckTradeLock:
         results = []
         errors = []
 
-        def check_trade_thread():
+        async def check_trade_task():
             try:
                 for _ in range(5):
-                    result = risk_engine.check_trade(trade_action, current_price=100.0)
+                    result = await risk_engine.check_trade(trade_action, current_price=100.0)
                     results.append(result)
-                    time.sleep(0.01)
+                    await asyncio.sleep(0.01)
             except Exception as e:
                 errors.append(str(e))
 
-        def update_portfolio_thread():
+        async def update_portfolio_task():
             try:
                 for i in range(5):
-                    risk_engine.update_portfolio({"AAPL": 5000.0 + i * 100}, 0.0)
-                    time.sleep(0.01)
+                    await risk_engine.update_portfolio({"AAPL": 5000.0 + i * 100}, 0.0)
+                    await asyncio.sleep(0.01)
             except Exception as e:
                 errors.append(str(e))
 
-        threads = [
-            threading.Thread(target=check_trade_thread),
-            threading.Thread(target=update_portfolio_thread),
-        ]
-
-        for t in threads:
-            t.start()
-
-        for t in threads:
-            t.join(timeout=10.0)
+        await asyncio.gather(
+            check_trade_task(),
+            update_portfolio_task(),
+        )
 
         # Should have no errors
         assert len(errors) == 0

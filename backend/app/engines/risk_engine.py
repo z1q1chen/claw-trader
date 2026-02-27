@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import threading
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
@@ -57,7 +57,7 @@ class RiskEngine:
         self._daily_pnl_start: float = 0.0
         self._peak_portfolio_value: float = 0.0
         self._return_history: list[float] = []
-        self._reset_lock = threading.Lock()
+        self._reset_lock = asyncio.Lock()
 
     @property
     def kill_switch_active(self) -> bool:
@@ -71,8 +71,8 @@ class RiskEngine:
         self._kill_switch = False
         logger.warning("Kill switch deactivated")
 
-    def update_portfolio(self, positions: dict[str, float], daily_pnl: float) -> None:
-        with self._reset_lock:
+    async def update_portfolio(self, positions: dict[str, float], daily_pnl: float) -> None:
+        async with self._reset_lock:
             self._portfolio.positions = positions
             self._portfolio.total_exposure_usd = sum(abs(v) for v in positions.values())
             self._portfolio.daily_pnl_usd = daily_pnl
@@ -88,8 +88,8 @@ class RiskEngine:
                     self._portfolio.max_drawdown_pct, drawdown
                 )
 
-    def check_trade(self, action: TradeAction, current_price: float) -> RiskCheckResult:
-        with self._reset_lock:
+    async def check_trade(self, action: TradeAction, current_price: float) -> RiskCheckResult:
+        async with self._reset_lock:
             if self._kill_switch:
                 return RiskCheckResult(
                     passed=False,
@@ -181,9 +181,9 @@ class RiskEngine:
             "positions": self._portfolio.positions,
         }
 
-    def reset_daily(self) -> None:
+    async def reset_daily(self) -> None:
         """Reset daily P&L tracking. Call at market open or midnight."""
-        with self._reset_lock:
+        async with self._reset_lock:
             logger.info(f"Resetting daily metrics. Current daily PnL: ${self._portfolio.daily_pnl_usd:.2f}")
             self._portfolio.daily_pnl_usd = 0.0
             self._portfolio.max_drawdown_pct = 0.0

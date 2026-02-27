@@ -436,6 +436,37 @@ class LLMBrain:
                 self._last_call_error = f"Invalid action: {action}"
                 return None
 
+            order_type = decision.get("order_type", "MARKET")
+            limit_price = decision.get("limit_price")
+
+            if order_type:
+                order_type = str(order_type).upper()
+                if order_type not in ("MARKET", "LIMIT"):
+                    logger.warning(f"LLM output validation: order_type '{order_type}' not valid, defaulting to MARKET")
+                    order_type = "MARKET"
+                    limit_price = None
+            else:
+                order_type = "MARKET"
+
+            if order_type == "LIMIT":
+                if limit_price is None:
+                    logger.warning("LLM output validation: LIMIT order requires limit_price, defaulting to MARKET")
+                    order_type = "MARKET"
+                    limit_price = None
+                else:
+                    try:
+                        limit_price = float(limit_price)
+                        if limit_price <= 0:
+                            logger.warning(f"LLM output validation: limit_price must be > 0, got {limit_price}, defaulting to MARKET")
+                            order_type = "MARKET"
+                            limit_price = None
+                    except (ValueError, TypeError):
+                        logger.warning(f"LLM output validation: limit_price must be a number, got {limit_price}, defaulting to MARKET")
+                        order_type = "MARKET"
+                        limit_price = None
+            else:
+                limit_price = None
+
             self._last_call_success = True
             self._last_call_error = None
 
@@ -446,8 +477,8 @@ class LLMBrain:
                 reasoning=decision.get("reasoning", ""),
                 confidence=confidence,
                 strategy="llm_signal_response",
-                order_type=decision.get("order_type", "MARKET"),
-                limit_price=decision.get("limit_price"),
+                order_type=order_type,
+                limit_price=limit_price,
             )
         except Exception as e:
             logger.error(f"LLM Brain error: {e}")
