@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
 from app.engines.signal_engine import SignalEngine
@@ -72,6 +72,57 @@ async def handle_kill_switch(event: Event) -> None:
         risk_engine.deactivate_kill_switch()
 
 
+async def handle_signal_log(event: Event) -> None:
+    """Log detected signals to database."""
+    data = event.data
+    await log_signal(
+        symbol=data["symbol"],
+        signal_type=data["signal_type"],
+        value=data["value"],
+        metadata=data.get("metadata", {}),
+    )
+
+
+async def periodic_portfolio_sync() -> None:
+    """Periodically sync broker positions and persist risk snapshots."""
+    while True:
+        try:
+            for broker_name, broker in execution_engine._brokers.items():
+                positions = await broker.get_positions()
+                exposure_map: dict[str, float] = {}
+                for symbol, pos_data in positions.items():
+                    exposure = abs(pos_data.get("quantity", 0) * pos_data.get("avg_cost", 0))
+                    exposure_map[symbol] = exposure
+                    await upsert_position(
+                        broker=broker_name,
+                        symbol=symbol,
+                        quantity=pos_data.get("quantity", 0),
+                        avg_entry_price=pos_data.get("avg_cost", 0),
+                        current_price=pos_data.get("market_value", 0) / max(pos_data.get("quantity", 1), 0.01),
+                        unrealized_pnl=pos_data.get("unrealized_pnl", 0),
+                        realized_pnl=pos_data.get("realized_pnl", 0),
+                    )
+
+                balance = await broker.get_balance()
+                daily_pnl = balance.get("UnrealizedPnL", 0) + balance.get("RealizedPnL", 0)
+                risk_engine.update_portfolio(exposure_map, daily_pnl)
+
+            snapshot = risk_engine.get_risk_snapshot()
+            await save_risk_snapshot(
+                total_exposure_usd=snapshot["total_exposure_usd"],
+                daily_pnl_usd=snapshot["daily_pnl_usd"],
+                max_drawdown_pct=snapshot["max_drawdown_pct"],
+                var_95_usd=snapshot["var_95_usd"],
+                positions_count=snapshot["positions_count"],
+                kill_switch_active=snapshot["kill_switch_active"],
+                details=snapshot.get("positions", {}),
+            )
+        except Exception as e:
+            logger.error(f"Portfolio sync error: {e}")
+
+        await asyncio.sleep(30)  # Sync every 30 seconds
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -87,6 +138,10 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("signal", handle_signal)
     event_bus.subscribe("llm_config_changed", handle_llm_config_changed)
     event_bus.subscribe("kill_switch_toggle", handle_kill_switch)
+    event_bus.subscribe("signal", handle_signal_log)
+
+    # Start periodic portfolio sync
+    sync_task = asyncio.create_task(periodic_portfolio_sync())
 
     # Start signal engine with dummy feed (replace with IBKR feed in production)
     feed = DummyPriceFeed(settings.price_feed_symbols)
@@ -101,6 +156,11 @@ async def lifespan(app: FastAPI):
     signal_task.cancel()
     try:
         await signal_task
+    except asyncio.CancelledError:
+        pass
+    sync_task.cancel()
+    try:
+        await sync_task
     except asyncio.CancelledError:
         pass
 

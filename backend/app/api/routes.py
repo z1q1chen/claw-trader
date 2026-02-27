@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.database import DB_PATH
 from app.core.events import Event, event_bus
+from app.core.logging import logger
 
 router = APIRouter()
 
@@ -144,9 +145,13 @@ async def get_positions():
 
 @router.get("/api/balance/{broker}")
 async def get_balance(broker: str):
-    # This will be wired to the actual broker adapter in main.py
-    # For now, return from the event bus state
-    return {"broker": broker, "balance": {}, "note": "Connect broker to see live balance"}
+    from app.main import execution_engine
+    try:
+        balance = await execution_engine.get_balance(broker)
+        return {"broker": broker, "balance": balance}
+    except Exception as e:
+        logger.error(f"Balance fetch error: {e}")
+        return {"broker": broker, "balance": {}, "error": str(e)}
 
 
 # --- Risk ---
@@ -175,6 +180,20 @@ async def get_risk_config():
 
 @router.post("/api/risk/config")
 async def update_risk_config(req: RiskConfigRequest):
+    errors = []
+    if req.max_position_usd is not None and req.max_position_usd <= 0:
+        errors.append("max_position_usd must be positive")
+    if req.max_daily_loss_usd is not None and req.max_daily_loss_usd <= 0:
+        errors.append("max_daily_loss_usd must be positive")
+    if req.max_portfolio_exposure_usd is not None and req.max_portfolio_exposure_usd <= 0:
+        errors.append("max_portfolio_exposure_usd must be positive")
+    if req.max_single_trade_usd is not None and req.max_single_trade_usd <= 0:
+        errors.append("max_single_trade_usd must be positive")
+    if req.max_drawdown_pct is not None and (req.max_drawdown_pct <= 0 or req.max_drawdown_pct > 100):
+        errors.append("max_drawdown_pct must be between 0 and 100")
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
     if req.max_position_usd is not None:
         settings.max_position_usd = req.max_position_usd
     if req.max_daily_loss_usd is not None:
@@ -192,6 +211,12 @@ async def update_risk_config(req: RiskConfigRequest):
 async def toggle_kill_switch(req: KillSwitchRequest):
     await event_bus.publish(Event(type="kill_switch_toggle", data={"active": req.active}))
     return {"status": "ok", "active": req.active}
+
+
+@router.get("/api/risk/live")
+async def get_live_risk():
+    from app.main import risk_engine
+    return risk_engine.get_risk_snapshot()
 
 
 # --- Signals ---

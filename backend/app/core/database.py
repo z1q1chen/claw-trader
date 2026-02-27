@@ -175,3 +175,91 @@ async def log_order(
         )
         await db.commit()
         return cursor.lastrowid
+
+
+async def update_order_status(
+    order_id: int,
+    status: str,
+    broker_order_id: str | None = None,
+    filled_price: float | None = None,
+    filled_quantity: float | None = None,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE orders SET status = ?, broker_order_id = COALESCE(?, broker_order_id),
+               filled_price = COALESCE(?, filled_price),
+               filled_quantity = COALESCE(?, filled_quantity),
+               updated_at = datetime('now')
+               WHERE id = ?""",
+            (status, broker_order_id, filled_price, filled_quantity, order_id),
+        )
+        await db.commit()
+
+
+async def mark_decision_executed(decision_id: int, execution_id: str | None = None) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE trade_decisions SET executed = 1, execution_id = ? WHERE id = ?",
+            (execution_id, decision_id),
+        )
+        await db.commit()
+
+
+async def log_signal(symbol: str, signal_type: str, value: float, metadata: dict) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO signals (symbol, signal_type, value, metadata) VALUES (?, ?, ?, ?)",
+            (symbol, signal_type, value, json.dumps(metadata)),
+        )
+        await db.commit()
+
+
+async def save_risk_snapshot(
+    total_exposure_usd: float,
+    daily_pnl_usd: float,
+    max_drawdown_pct: float,
+    var_95_usd: float,
+    positions_count: int,
+    kill_switch_active: bool,
+    details: dict,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO risk_snapshots
+               (total_exposure_usd, daily_pnl_usd, max_drawdown_pct, var_95_usd,
+                positions_count, kill_switch_active, details)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (total_exposure_usd, daily_pnl_usd, max_drawdown_pct, var_95_usd,
+             positions_count, int(kill_switch_active), json.dumps(details)),
+        )
+        await db.commit()
+
+
+async def upsert_position(
+    broker: str, symbol: str, quantity: float,
+    avg_entry_price: float, current_price: float,
+    unrealized_pnl: float, realized_pnl: float,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id FROM positions WHERE broker = ? AND symbol = ?",
+            (broker, symbol),
+        )
+        row = await cursor.fetchone()
+        if row:
+            await db.execute(
+                """UPDATE positions SET quantity = ?, avg_entry_price = ?,
+                   current_price = ?, unrealized_pnl = ?, realized_pnl = ?,
+                   updated_at = datetime('now')
+                   WHERE id = ?""",
+                (quantity, avg_entry_price, current_price, unrealized_pnl, realized_pnl, row[0]),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO positions (broker, symbol, quantity, avg_entry_price,
+                   current_price, unrealized_pnl, realized_pnl)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (broker, symbol, quantity, avg_entry_price, current_price,
+                 unrealized_pnl, realized_pnl),
+            )
+        await db.commit()

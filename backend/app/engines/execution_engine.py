@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.database import log_order, log_trade_decision
+from app.core.database import log_order, log_trade_decision, update_order_status, mark_decision_executed
 from app.core.events import Event, event_bus
 from app.core.logging import logger
 from app.engines.llm_brain import TradeAction
@@ -117,6 +117,17 @@ class ExecutionEngine:
             side=action.side,
             quantity=quantity,
         )
+
+        if result.success:
+            await update_order_status(
+                order_id, "filled",
+                broker_order_id=result.broker_order_id,
+                filled_price=result.filled_price,
+                filled_quantity=result.filled_quantity,
+            )
+            await mark_decision_executed(decision_id, result.broker_order_id)
+        else:
+            await update_order_status(order_id, "failed", broker_order_id=result.broker_order_id)
 
         await event_bus.publish(Event(
             type="order_executed" if result.success else "order_failed",

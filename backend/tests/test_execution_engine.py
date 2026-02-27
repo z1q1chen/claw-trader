@@ -198,7 +198,13 @@ async def test_execute_trade_happy_path_success() -> None:
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
-    ) as mock_publish, patch.object(
+    ) as mock_publish, patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
+        new_callable=AsyncMock,
+    ), patch.object(
         risk_engine,
         "check_trade",
         return_value=RiskCheckResult(passed=True),
@@ -257,6 +263,12 @@ async def test_execute_trade_uses_adjusted_quantity() -> None:
     ) as mock_log_order, patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
+        new_callable=AsyncMock,
     ), patch.object(
         risk_engine,
         "check_trade",
@@ -308,7 +320,13 @@ async def test_execute_trade_broker_returns_failure() -> None:
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
-    ) as mock_publish, patch.object(
+    ) as mock_publish, patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
+        new_callable=AsyncMock,
+    ), patch.object(
         risk_engine,
         "check_trade",
         return_value=RiskCheckResult(passed=True),
@@ -480,6 +498,12 @@ async def test_execute_trade_logs_decision_with_correct_params() -> None:
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
+        new_callable=AsyncMock,
     ), patch.object(
         risk_engine,
         "check_trade",
@@ -526,6 +550,12 @@ async def test_execute_trade_logs_order_with_correct_params() -> None:
         return_value=100,
     ) as mock_log_order, patch(
         "app.engines.execution_engine.event_bus.publish",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
         new_callable=AsyncMock,
     ), patch.object(
         risk_engine,
@@ -579,7 +609,13 @@ async def test_execute_trade_publishes_correct_event_data() -> None:
     ), patch(
         "app.engines.execution_engine.event_bus.publish",
         new_callable=AsyncMock,
-    ) as mock_publish, patch.object(
+    ) as mock_publish, patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
+        new_callable=AsyncMock,
+    ), patch.object(
         risk_engine,
         "check_trade",
         return_value=RiskCheckResult(passed=True),
