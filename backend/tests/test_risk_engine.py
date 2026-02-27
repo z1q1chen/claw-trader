@@ -192,6 +192,51 @@ class TestRiskEngineKillSwitch:
         assert risk_engine.kill_switch_active is False
 
 
+class TestRiskEngineResetDaily:
+    """Tests for RiskEngine.reset_daily() method."""
+
+    def test_reset_daily_clears_pnl(self, risk_engine):
+        """reset_daily() should reset daily_pnl_usd to 0."""
+        risk_engine.update_portfolio({"AAPL": 5000}, -1000)
+        assert risk_engine._portfolio.daily_pnl_usd == -1000
+
+        risk_engine.reset_daily()
+
+        assert risk_engine._portfolio.daily_pnl_usd == 0.0
+
+    def test_reset_daily_clears_drawdown(self, risk_engine):
+        """reset_daily() should reset max_drawdown_pct to 0."""
+        risk_engine.update_portfolio({"AAPL": 10000}, 0)
+        risk_engine.update_portfolio({"AAPL": 5000}, 0)
+        assert risk_engine._portfolio.max_drawdown_pct > 0
+
+        risk_engine.reset_daily()
+
+        assert risk_engine._portfolio.max_drawdown_pct == 0.0
+
+    def test_reset_daily_deactivates_kill_switch(self, risk_engine):
+        """reset_daily() should deactivate the kill switch if active."""
+        risk_engine.activate_kill_switch("test")
+        assert risk_engine.kill_switch_active is True
+
+        risk_engine.reset_daily()
+
+        assert risk_engine.kill_switch_active is False
+
+    def test_reset_daily_sets_peak_to_current_exposure(self, risk_engine):
+        """reset_daily() should set _peak_portfolio_value to current total_exposure_usd."""
+        risk_engine.update_portfolio({"AAPL": 5000}, 0)
+        assert risk_engine._peak_portfolio_value == 5000.0
+
+        # Simulate a decline
+        risk_engine.update_portfolio({"AAPL": 3000}, 0)
+        assert risk_engine._peak_portfolio_value == 5000.0  # Peak unchanged
+
+        # After reset, peak should be set to current exposure
+        risk_engine.reset_daily()
+        assert risk_engine._peak_portfolio_value == 3000.0
+
+
 class TestRiskEngineUpdatePortfolio:
     """Tests for RiskEngine.update_portfolio() method."""
 

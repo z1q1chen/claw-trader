@@ -52,6 +52,17 @@ export default function Dashboard() {
   const [killSwitch, setKillSwitch] = useState(false);
   const [brokers, setBrokers] = useState<BrokersResponse>({ brokers: [], default: null });
   const [connectingBroker, setConnectingBroker] = useState(false);
+  const [brokerStatus, setBrokerStatus] = useState<string | null>(null);
+  const [llmStatus, setLlmStatus] = useState<string | null>(null);
+  const [riskStatus, setRiskStatus] = useState<string | null>(null);
+  const [tradeForm, setTradeForm] = useState({
+    symbol: "",
+    side: "buy" as "buy" | "sell",
+    quantity: 0,
+    price: 0,
+    broker: undefined as string | undefined,
+  });
+  const [tradeStatus, setTradeStatus] = useState<string | null>(null);
   const wsRef = useRef<{ close: () => void } | null>(null);
 
   const refreshData = useCallback(async () => {
@@ -111,13 +122,19 @@ export default function Dashboard() {
   }, [refreshData]);
 
   const saveLLMConfig = async () => {
-    await api.updateLLMConfig({
-      provider: llmConfig.provider,
-      model_name: llmConfig.model_name,
-      api_key: llmConfig.api_key,
-      base_url: llmConfig.base_url || undefined,
-    });
-    refreshData();
+    setLlmStatus(null);
+    try {
+      await api.updateLLMConfig({
+        provider: llmConfig.provider,
+        model_name: llmConfig.model_name,
+        api_key: llmConfig.api_key,
+        base_url: llmConfig.base_url || undefined,
+      });
+      setLlmStatus("Configuration saved");
+      refreshData();
+    } catch (e: any) {
+      setLlmStatus(`Error: ${e.message}`);
+    }
   };
 
   const handleKillSwitch = async () => {
@@ -127,17 +144,25 @@ export default function Dashboard() {
   };
 
   const saveRiskConfig = async () => {
-    await api.updateRiskConfig(riskConfig);
-    refreshData();
+    setRiskStatus(null);
+    try {
+      await api.updateRiskConfig(riskConfig);
+      setRiskStatus("Configuration saved");
+      refreshData();
+    } catch (e: any) {
+      setRiskStatus(`Error: ${e.message}`);
+    }
   };
 
   const connectBroker = async (broker: string) => {
     setConnectingBroker(true);
+    setBrokerStatus(null);
     try {
       await api.connectBroker(broker);
+      setBrokerStatus(`${broker} connected successfully`);
       refreshData();
     } catch (e: any) {
-      alert(`Failed to connect ${broker}: ${e.message}`);
+      setBrokerStatus(`Failed to connect ${broker}: ${e.message}`);
     } finally {
       setConnectingBroker(false);
     }
@@ -146,6 +171,24 @@ export default function Dashboard() {
   const disconnectBroker = async (broker: string) => {
     await api.disconnectBroker(broker);
     refreshData();
+  };
+
+  const submitTrade = async () => {
+    setTradeStatus(null);
+    try {
+      const result = await api.placeTrade({
+        symbol: tradeForm.symbol,
+        side: tradeForm.side,
+        quantity: tradeForm.quantity,
+        price: tradeForm.price,
+        broker: tradeForm.broker,
+      });
+      setTradeStatus(`Trade executed! Order: ${result.broker_order_id}`);
+      setTradeForm({ symbol: "", side: "buy", quantity: 0, price: 0, broker: undefined });
+      refreshData();
+    } catch (e: any) {
+      setTradeStatus(`Error: ${e.message}`);
+    }
   };
 
   return (
@@ -226,6 +269,11 @@ export default function Dashboard() {
           <button className="btn" onClick={saveLLMConfig}>
             Save Configuration
           </button>
+          {llmStatus && (
+            <p style={{ marginTop: 8, fontSize: 12, color: llmStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
+              {llmStatus}
+            </p>
+          )}
         </div>
 
         {/* API Usage */}
@@ -348,6 +396,11 @@ export default function Dashboard() {
           <button className="btn" onClick={saveRiskConfig}>
             Update Risk Limits
           </button>
+          {riskStatus && (
+            <p style={{ marginTop: 8, fontSize: 12, color: riskStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
+              {riskStatus}
+            </p>
+          )}
         </div>
 
         {/* Signals */}
@@ -418,6 +471,83 @@ export default function Dashboard() {
           {brokers.brokers.length === 0 && (
             <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
               No brokers connected. Connect IBKR TWS/Gateway to trade.
+            </p>
+          )}
+          {brokerStatus && (
+            <p style={{ marginTop: 8, fontSize: 12, color: brokerStatus.includes("Failed") ? "#ef4444" : "#22c55e" }}>
+              {brokerStatus}
+            </p>
+          )}
+        </div>
+
+        {/* Manual Trade */}
+        <div className="card">
+          <h2>Manual Trade</h2>
+          <div className="form-row">
+            <label>Symbol</label>
+            <input
+              className="input"
+              value={tradeForm.symbol}
+              onChange={(e) => setTradeForm({ ...tradeForm, symbol: e.target.value.toUpperCase() })}
+              placeholder="AAPL"
+            />
+          </div>
+          <div className="form-row">
+            <label>Side</label>
+            <select
+              className="select"
+              value={tradeForm.side}
+              onChange={(e) => setTradeForm({ ...tradeForm, side: e.target.value as "buy" | "sell" })}
+            >
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <label>Quantity</label>
+            <input
+              className="input"
+              type="number"
+              value={tradeForm.quantity || ""}
+              onChange={(e) => setTradeForm({ ...tradeForm, quantity: parseFloat(e.target.value) || 0 })}
+              placeholder="10"
+            />
+          </div>
+          <div className="form-row">
+            <label>Price (est.)</label>
+            <input
+              className="input"
+              type="number"
+              value={tradeForm.price || ""}
+              onChange={(e) => setTradeForm({ ...tradeForm, price: parseFloat(e.target.value) || 0 })}
+              placeholder="150.00"
+            />
+          </div>
+          {brokers.brokers.length > 1 && (
+            <div className="form-row">
+              <label>Broker</label>
+              <select
+                className="select"
+                value={tradeForm.broker || ""}
+                onChange={(e) => setTradeForm({ ...tradeForm, broker: e.target.value || undefined })}
+              >
+                <option value="">Default ({brokers.default})</option>
+                {brokers.brokers.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button
+            className="btn"
+            onClick={submitTrade}
+            disabled={!tradeForm.symbol || tradeForm.quantity <= 0}
+          >
+            Place Trade
+          </button>
+          {tradeStatus && (
+            <p style={{ marginTop: 8, fontSize: 12, color: tradeStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
+              {tradeStatus}
             </p>
           )}
         </div>

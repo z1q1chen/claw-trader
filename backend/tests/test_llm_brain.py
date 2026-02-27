@@ -78,6 +78,38 @@ def test_trade_action_sell_side():
     assert action.symbol == "GOOGL"
 
 
+def test_trade_action_limit_order():
+    """Test TradeAction with limit order."""
+    action = TradeAction(
+        symbol="AAPL",
+        side="buy",
+        quantity=10,
+        reasoning="test",
+        confidence=0.9,
+        strategy="test",
+        order_type="LIMIT",
+        limit_price=150.0,
+    )
+
+    assert action.order_type == "LIMIT"
+    assert action.limit_price == 150.0
+
+
+def test_trade_action_defaults_to_market():
+    """Test TradeAction defaults to MARKET order type."""
+    action = TradeAction(
+        symbol="AAPL",
+        side="buy",
+        quantity=10,
+        reasoning="test",
+        confidence=0.9,
+        strategy="test",
+    )
+
+    assert action.order_type == "MARKET"
+    assert action.limit_price is None
+
+
 # ============================================================================
 # LLMResponse Dataclass Tests
 # ============================================================================
@@ -115,6 +147,21 @@ def test_llm_response_gemini():
 
     assert response.provider == "gemini"
     assert response.model == "gemini-2.0-flash"
+
+
+# ============================================================================
+# LLMBrain Portfolio Context Tests
+# ============================================================================
+
+
+def test_set_portfolio_context():
+    """Test set_portfolio_context() stores portfolio data correctly."""
+    brain = LLMBrain()
+    brain.set_portfolio_context({"AAPL": 5000, "MSFT": 3000}, -200.0, 8000.0)
+
+    assert brain._positions == {"AAPL": 5000, "MSFT": 3000}
+    assert brain._daily_pnl == -200.0
+    assert brain._total_exposure == 8000.0
 
 
 # ============================================================================

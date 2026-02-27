@@ -100,14 +100,14 @@ class RiskEngine:
             adjusted_quantity = settings.max_single_trade_usd / current_price
             trade_value = settings.max_single_trade_usd
 
-        # Check position concentration (20% max per symbol)
+        # Check position concentration
         current_symbol_exposure = abs(self._portfolio.positions.get(action.symbol, 0))
         new_exposure = current_symbol_exposure + trade_value
-        max_per_position = settings.max_portfolio_exposure_usd * 0.2
+        max_per_position = settings.max_portfolio_exposure_usd * (settings.max_position_concentration_pct / 100.0)
         if new_exposure > max_per_position:
             return RiskCheckResult(
                 passed=False,
-                rejection_reason=f"Position in {action.symbol} would reach ${new_exposure:.0f}, exceeding 20% concentration limit of ${max_per_position:.0f}",
+                rejection_reason=f"Position in {action.symbol} would reach ${new_exposure:.0f}, exceeding {settings.max_position_concentration_pct}% concentration limit of ${max_per_position:.0f}",
             )
 
         # Check total portfolio exposure
@@ -170,3 +170,12 @@ class RiskEngine:
             "kill_switch_active": self._kill_switch,
             "positions": self._portfolio.positions,
         }
+
+    def reset_daily(self) -> None:
+        """Reset daily P&L tracking. Call at market open or midnight."""
+        self._portfolio.daily_pnl_usd = 0.0
+        self._portfolio.max_drawdown_pct = 0.0
+        self._peak_portfolio_value = self._portfolio.total_exposure_usd
+        if self._kill_switch:
+            self.deactivate_kill_switch()
+        logger.info("Risk engine: daily metrics reset")

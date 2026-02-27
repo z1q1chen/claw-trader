@@ -21,6 +21,8 @@ class TradeAction:
     reasoning: str
     confidence: float  # 0.0 to 1.0
     strategy: str
+    order_type: str = "MARKET"
+    limit_price: float | None = None
 
 
 @dataclass
@@ -169,6 +171,8 @@ You MUST respond with valid JSON in this exact format:
   "symbol": "<ticker>",
   "quantity": <number>,
   "confidence": <0.0 to 1.0>,
+  "order_type": "MARKET" | "LIMIT",
+  "limit_price": <price or null>,
   "reasoning": "<brief explanation of your decision>"
 }
 
@@ -178,6 +182,8 @@ Rules:
 - Factor in current positions to avoid overexposure
 - "hold" means do nothing
 - quantity should be in number of shares (stocks) or USD amount (prediction markets)
+- You can specify "order_type": "MARKET" or "LIMIT"
+- For LIMIT orders, include "limit_price": <price>
 """
 
 
@@ -195,6 +201,9 @@ class LLMBrain:
         self._model_name: str = ""
         self._last_call_time: float = 0
         self._min_call_interval_s: float = 2.0
+        self._positions: dict[str, float] = {}
+        self._daily_pnl: float = 0.0
+        self._total_exposure: float = 0.0
 
     def configure(self, provider: str, model: str, api_key: str, base_url: str | None = None) -> None:
         self._provider_name = provider
@@ -211,6 +220,11 @@ class LLMBrain:
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
+    def set_portfolio_context(self, positions: dict[str, float], daily_pnl: float, total_exposure: float) -> None:
+        self._positions = positions
+        self._daily_pnl = daily_pnl
+        self._total_exposure = total_exposure
+
     async def decide(self, signal_event: Event) -> TradeAction | None:
         if self._provider is None:
             logger.warning("LLM Brain: No provider configured, skipping")
@@ -222,13 +236,24 @@ class LLMBrain:
         self._last_call_time = now
 
         data = signal_event.data
+        portfolio_context = ""
+        if self._positions:
+            positions_str = ", ".join(f"{sym}: ${exp:.0f}" for sym, exp in self._positions.items())
+            portfolio_context = (
+                f"\nCurrent Portfolio:\n"
+                f"  Positions: {positions_str}\n"
+                f"  Total Exposure: ${self._total_exposure:.0f}\n"
+                f"  Daily P&L: ${self._daily_pnl:.2f}\n"
+            )
+
         user_prompt = (
             f"Market signal detected:\n"
             f"  Symbol: {data['symbol']}\n"
             f"  Signal: {data['signal_type']}\n"
             f"  Value: {data['value']}\n"
             f"  Current Price: {data.get('price', 'N/A')}\n"
-            f"  Details: {json.dumps(data.get('metadata', {}))}\n\n"
+            f"  Details: {json.dumps(data.get('metadata', {}))}\n"
+            f"{portfolio_context}\n"
             f"Based on this signal, what is your trade decision?"
         )
 
@@ -265,6 +290,8 @@ class LLMBrain:
                 reasoning=decision.get("reasoning", ""),
                 confidence=float(decision.get("confidence", 0)),
                 strategy="llm_signal_response",
+                order_type=decision.get("order_type", "MARKET"),
+                limit_price=decision.get("limit_price"),
             )
         except Exception as e:
             logger.error(f"LLM Brain error: {e}")

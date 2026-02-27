@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     max_portfolio_exposure_usd: float = 50000.0
     max_single_trade_usd: float = 2000.0
     max_drawdown_pct: float = 10.0
+    max_position_concentration_pct: float = 20.0
 
     # Signal engine
     signal_scan_interval_ms: int = 500

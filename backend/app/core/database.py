@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import aiosqlite
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path("claw_trader.db")
+from app.core.config import settings
+
+
+def _get_db_path() -> str:
+    url = settings.database_url
+    if ":///" in url:
+        return url.split("///", 1)[1]
+    return url
+
+
+DB_PATH = _get_db_path()
 
 
 async def get_db() -> aiosqlite.Connection:

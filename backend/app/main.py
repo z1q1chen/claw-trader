@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -66,6 +67,18 @@ async def handle_signal_log(event: Event) -> None:
     )
 
 
+async def periodic_daily_reset() -> None:
+    """Reset risk metrics at midnight UTC each day."""
+    while True:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # Calculate seconds until next midnight UTC
+        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+        seconds_until_midnight = (tomorrow - now).total_seconds()
+        await asyncio.sleep(seconds_until_midnight)
+        risk_engine.reset_daily()
+        logger.info("Daily risk metrics reset at midnight UTC")
+
+
 async def periodic_portfolio_sync() -> None:
     """Periodically sync broker positions and persist risk snapshots."""
     while True:
@@ -89,6 +102,7 @@ async def periodic_portfolio_sync() -> None:
                 balance = await broker.get_balance()
                 daily_pnl = balance.get("UnrealizedPnL", 0) + balance.get("RealizedPnL", 0)
                 risk_engine.update_portfolio(exposure_map, daily_pnl)
+                llm_brain.set_portfolio_context(exposure_map, daily_pnl, sum(exposure_map.values()))
 
             snapshot = risk_engine.get_risk_snapshot()
             await save_risk_snapshot(
@@ -138,6 +152,9 @@ async def lifespan(app: FastAPI):
     # Start periodic portfolio sync
     sync_task = asyncio.create_task(periodic_portfolio_sync())
 
+    # Start daily reset task
+    reset_task = asyncio.create_task(periodic_daily_reset())
+
     # Start signal engine with dummy feed (replace with IBKR feed in production)
     feed = DummyPriceFeed(settings.price_feed_symbols)
     await feed.start()
@@ -158,6 +175,11 @@ async def lifespan(app: FastAPI):
     sync_task.cancel()
     try:
         await sync_task
+    except asyncio.CancelledError:
+        pass
+    reset_task.cancel()
+    try:
+        await reset_task
     except asyncio.CancelledError:
         pass
 

@@ -83,7 +83,7 @@ export const api = {
     }),
 
   // Manual Trading
-  placeTrade: (trade: { symbol: string; side: string; quantity: number; broker?: string }) =>
+  placeTrade: (trade: { symbol: string; side: string; quantity: number; price?: number; broker?: string }) =>
     fetchJSON<TradeDecision>("/trade", {
       method: "POST",
       body: JSON.stringify(trade),
@@ -95,6 +95,12 @@ export const api = {
 
   // Live Risk
   getLiveRisk: () => fetchJSON<RiskSnapshot>("/risk/live"),
+
+  // Markets (Polymarket)
+  getTrendingMarkets: (limit = 10) =>
+    fetchJSON<any[]>(`/markets/trending?limit=${limit}`),
+  searchMarkets: (query: string, limit = 10) =>
+    fetchJSON<any[]>(`/markets/search?q=${encodeURIComponent(query)}&limit=${limit}`),
 };
 
 export function createWebSocket(

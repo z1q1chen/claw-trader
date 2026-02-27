@@ -107,15 +107,18 @@ class ExecutionEngine:
             broker=broker_name,
             symbol=action.symbol,
             side=action.side,
-            order_type="MARKET",
+            order_type=action.order_type,
             quantity=quantity,
             decision_id=decision_id,
+            limit_price=action.limit_price,
         )
 
         result = await broker.place_order(
             symbol=action.symbol,
             side=action.side,
             quantity=quantity,
+            order_type=action.order_type,
+            limit_price=action.limit_price,
         )
 
         if result.success:
