@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config
+from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
 from app.core.middleware import RateLimitMiddleware
@@ -104,6 +104,12 @@ async def periodic_portfolio_sync() -> None:
                 risk_engine.update_portfolio(exposure_map, daily_pnl)
                 llm_brain.set_portfolio_context(exposure_map, daily_pnl, sum(exposure_map.values()))
 
+                # Track returns for VaR calculation
+                total_exposure = sum(exposure_map.values())
+                if total_exposure > 0 and daily_pnl != 0:
+                    daily_return_pct = daily_pnl / total_exposure * 100
+                    risk_engine.add_return(daily_return_pct)
+
             snapshot = risk_engine.get_risk_snapshot()
             await save_risk_snapshot(
                 total_exposure_usd=snapshot["total_exposure_usd"],
@@ -135,8 +141,17 @@ async def lifespan(app: FastAPI):
         settings.max_drawdown_pct = saved_risk["max_drawdown_pct"]
         logger.info("Loaded persisted risk configuration")
 
-    # Configure LLM brain with defaults
-    if settings.gemini_api_key:
+    # Load LLM config from database (overrides env defaults)
+    saved_llm = await load_llm_config()
+    if saved_llm and saved_llm.get("api_key"):
+        llm_brain.configure(
+            provider=saved_llm["provider"],
+            model=saved_llm["model_name"],
+            api_key=saved_llm["api_key"],
+            base_url=saved_llm.get("base_url") or None,
+        )
+        logger.info(f"Loaded LLM config from DB: {saved_llm['provider']}/{saved_llm['model_name']}")
+    elif settings.gemini_api_key:
         llm_brain.configure("gemini", "gemini-2.0-flash", settings.gemini_api_key)
     elif settings.openai_api_key:
         llm_brain.configure("openai", "gpt-4o", settings.openai_api_key)

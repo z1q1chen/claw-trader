@@ -211,3 +211,25 @@ async def test_prune_old_records(temp_db):
     # The record was just created, so it won't be pruned
     counts = await prune_old_records(30)
     assert counts["signals"] == 0  # nothing old to prune
+
+
+@pytest.mark.asyncio
+async def test_load_llm_config_returns_none_when_empty(temp_db):
+    from app.core.database import load_llm_config
+    result = await load_llm_config()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_load_llm_config_returns_active_config(temp_db):
+    from app.core.database import load_llm_config
+    async with aiosqlite.connect(temp_db) as db:
+        await db.execute(
+            "INSERT INTO llm_config (provider, model_name, api_key, base_url, is_active) VALUES (?, ?, ?, ?, ?)",
+            ("gemini", "gemini-2.0-flash", "test-key", "", 1),
+        )
+        await db.commit()
+    result = await load_llm_config()
+    assert result is not None
+    assert result["provider"] == "gemini"
+    assert result["api_key"] == "test-key"

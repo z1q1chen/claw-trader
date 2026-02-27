@@ -1,39 +1,42 @@
 # Claw Trader
 
-Autonomous quantitative trading agent with LLM-driven decision making. Supports multiple brokers (IBKR, Polymarket) and configurable LLM providers (Gemini, OpenAI, Anthropic, local models).
+An autonomous quantitative trading agent powered by LLMs. Monitors markets, detects technical signals, consults an AI brain for trade decisions, and executes through connected brokers.
 
 ## Architecture
 
 ```
-Signal Engine (500ms) → Event Bus → LLM Brain → Risk Engine → Execution Engine → Broker
-     ↓                     ↓                                                        ↓
-  Signals DB          WebSocket → Dashboard                                    Orders DB
+Signal Engine → LLM Brain → Risk Engine → Execution Engine → Broker
+     ↑                                                          |
+     └──────────── Price Feeds ←────────────────────────────────┘
 ```
 
-### Components
+- **Signal Engine** — Sub-second technical analysis (RSI, MACD, Bollinger Bands, volume spikes)
+- **LLM Brain** — AI-powered trade decisions via Gemini, OpenAI, Anthropic, or local models
+- **Risk Engine** — Pre-trade risk checks, position limits, daily loss limits, kill switch
+- **Execution Engine** — Routes orders to brokers with retry logic
+- **Dashboard** — Real-time Next.js dashboard with WebSocket event stream
 
-- **Signal Engine**: Sub-second technical analysis (RSI, MACD, Bollinger Bands, volume spikes) with configurable cooldowns
-- **LLM Brain**: Pluggable providers (Gemini, OpenAI, Anthropic, local via OpenAI-compatible API) with rate limiting
-- **Risk Engine**: Pre-trade checks (position limits, concentration, VaR, drawdown kill switch)
-- **Execution Engine**: Broker adapter pattern decoupling strategy from execution
-- **Event Bus**: Async pub/sub with WebSocket broadcast to dashboard
-- **Dashboard**: Next.js real-time UI for configuration, monitoring, and manual trading
+## Supported Brokers
+
+| Broker | Markets | Status |
+|--------|---------|--------|
+| Interactive Brokers | Stocks, ETFs, Options | Full support via ib_insync |
+| Polymarket | Prediction markets | CLOB API integration |
 
 ## Quick Start
 
 ### Prerequisites
-
 - Python 3.11+
-- Node.js 20+
-- (Optional) IBKR TWS or IB Gateway for live trading
-- (Optional) Docker for containerized deployment
+- Node.js 18+
+- (Optional) IBKR TWS/Gateway for stock trading
+- (Optional) Polygon RPC + Polymarket API key for prediction markets
 
 ### Backend
 
 ```bash
 cd backend
-cp ../.env.example ../.env  # Edit with your API keys
-pip install -e ".[dev]"
+cp ../.env.example .env  # Edit with your API keys
+pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -45,122 +48,63 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 to access the dashboard.
+Dashboard available at http://localhost:3000
 
-### Docker
+### Using Local LLM
 
-```bash
-cp .env.example .env  # Edit with your API keys
-docker compose up
-```
+Claw Trader supports any OpenAI-compatible local LLM server (e.g., LM Studio, Ollama, vLLM):
+
+1. Start your local LLM server (e.g., `lm-studio --port 1234`)
+2. In the dashboard, select **Local (OpenAI-compatible)** as the provider
+3. Set the model name (e.g., `mistral-7b-instruct`)
+4. Set the base URL (e.g., `http://127.0.0.1:1234/v1`)
+5. API key can be any non-empty string (e.g., `local`)
+
+### Trading on Polymarket
+
+1. Set `CT_POLYMARKET_API_KEY` and `CT_POLYMARKET_PRIVATE_KEY` in `.env`
+2. Set `CT_POLYGON_RPC_URL` to a Polygon RPC endpoint
+3. Connect the Polymarket broker from the dashboard
+4. Browse trending markets and execute trades
 
 ## Configuration
 
-All settings use the `CT_` prefix and can be set via environment variables or `.env` file.
+All settings are configured via environment variables with the `CT_` prefix. See `.env.example` for the full list.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `CT_DEFAULT_LLM_PROVIDER` | `gemini` | LLM provider: gemini, openai, anthropic, local |
-| `CT_GEMINI_API_KEY` | | Google Gemini API key |
-| `CT_OPENAI_API_KEY` | | OpenAI API key |
-| `CT_IBKR_PORT` | `7497` | IBKR port (7497=paper, 7496=live) |
-| `CT_MAX_SINGLE_TRADE_USD` | `2000` | Max single trade size |
-| `CT_MAX_DAILY_LOSS_USD` | `5000` | Daily loss kill switch threshold |
-| `CT_MAX_PORTFOLIO_EXPOSURE_USD` | `50000` | Max total portfolio exposure |
-| `CT_MAX_DRAWDOWN_PCT` | `10` | Max drawdown % before kill switch |
-| `CT_SIGNAL_SCAN_INTERVAL_MS` | `500` | Signal detection interval |
-| `CT_RATE_LIMIT_RPM` | `120` | API rate limit per IP per minute |
+Key settings:
+- `CT_GEMINI_API_KEY` / `CT_OPENAI_API_KEY` / `CT_ANTHROPIC_API_KEY` — LLM provider keys
+- `CT_MAX_SINGLE_TRADE_USD` — Maximum trade size
+- `CT_MAX_DAILY_LOSS_USD` — Daily loss limit (triggers kill switch)
+- `CT_MAX_PORTFOLIO_EXPOSURE_USD` — Total exposure cap
+- `CT_SIGNAL_SCAN_INTERVAL_MS` — Signal detection frequency (default 500ms)
 
-## Local LLM Support
+## API
 
-Connect any OpenAI-compatible local server:
-
-1. Start your local LLM server (Ollama, LM Studio, vLLM, etc.)
-2. In the dashboard, set Provider to "Local", enter the model name, and set Base URL (e.g., `http://127.0.0.1:1234/v1`)
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | System health and engine status |
-| GET/POST | `/api/llm/config` | LLM configuration |
-| GET | `/api/usage/summary` | API usage statistics |
-| GET | `/api/decisions` | Trade decisions history |
-| GET | `/api/orders` | Order history |
-| GET | `/api/positions` | Current positions |
-| GET | `/api/balance/{broker}` | Account balance |
-| GET/POST | `/api/risk/config` | Risk limit configuration |
-| GET | `/api/risk/live` | Live risk metrics |
-| POST | `/api/risk/killswitch` | Toggle kill switch |
-| GET | `/api/brokers` | List connected brokers |
-| POST | `/api/broker/connect` | Connect to broker |
-| POST | `/api/trade` | Place manual trade |
-| WS | `/ws` | Real-time event stream |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | System health check |
+| `/api/llm/config` | GET/POST | LLM provider configuration |
+| `/api/risk/config` | GET/POST | Risk limit configuration |
+| `/api/risk/live` | GET | Live risk snapshot |
+| `/api/risk/killswitch` | POST | Toggle kill switch |
+| `/api/trade` | POST | Manual trade execution |
+| `/api/decisions` | GET | LLM trade decisions |
+| `/api/orders` | GET | Order history |
+| `/api/positions` | GET | Open positions |
+| `/api/signals` | GET | Detected signals |
+| `/api/brokers` | GET | Connected brokers |
+| `/api/broker/connect` | POST | Connect a broker |
+| `/api/markets/trending` | GET | Trending Polymarket markets |
+| `/api/markets/search` | GET | Search Polymarket markets |
+| `/ws` | WebSocket | Real-time event stream |
 
 ## Testing
 
 ```bash
 cd backend
-python -m pytest tests/ -v
-python -m pytest tests/ --cov=app --cov-report=term-missing
+pip install -r requirements-dev.txt
+pytest tests/ -v
 ```
-
-## Project Structure
-
-```
-backend/
-  app/
-    api/routes.py        # FastAPI endpoints
-    brokers/             # Broker adapters (IBKR, Polymarket)
-    core/                # Config, database, events, logging, middleware
-    engines/             # Signal, LLM, risk, execution engines
-    feeds/               # Price feed implementations
-  tests/                 # 162+ tests
-frontend/
-  src/
-    app/page.tsx         # Dashboard UI
-    lib/api.ts           # API client
-```
-
-## Risk Management
-
-| Check | Default | Description |
-|-------|---------|-------------|
-| Single trade limit | $2,000 | Max USD per trade |
-| Position concentration | 20% | Max % of portfolio in one symbol |
-| Total exposure | $50,000 | Max total portfolio exposure |
-| Daily loss limit | $5,000 | Triggers kill switch if breached |
-| Max drawdown | 10% | Triggers kill switch if breached |
-| VaR (95%) | Calculated | Value at Risk from return history |
-| Kill switch | Dashboard | Manual emergency stop for all trading |
-
-## IBKR Setup
-
-1. Download [IBKR TWS](https://www.interactivebrokers.com/en/trading/tws.php) or IB Gateway
-2. Enable API: Configure > API > Settings > Enable ActiveX and Socket Clients
-3. Use port 7497 for paper trading, 7496 for live trading
-4. Set `CT_IBKR_PORT=7497` in your `.env`
-
-## Features Implemented
-
-- Signal engine with RSI, MACD, Bollinger Bands, volume spike detection
-- LLM brain with Gemini, OpenAI, Anthropic providers (+ local via OpenAI-compatible API)
-- Risk engine with VaR, drawdown, position limits, kill switch
-- Execution engine with broker adapter pattern
-- IBKR broker adapter (full implementation)
-- Polymarket adapter (market data implemented, execution stubbed)
-- Dashboard: LLM config, API usage, decisions, orders, positions, risk, live events
-- Real-time WebSocket event stream
-- SQLite persistence for all decisions, orders, and API usage
-
-## Future Roadmap
-
-- Polymarket on-chain trade execution (CTF split + CLOB)
-- Strategy framework (pluggable strategy modules)
-- Backtesting engine
-- Multi-timeframe signal analysis
-- Options chain data integration
-- News/sentiment feed (LLM-analyzed)
 
 ## License
 

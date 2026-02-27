@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -120,6 +121,21 @@ class ExecutionEngine:
             order_type=action.order_type,
             limit_price=action.limit_price,
         )
+
+        # Retry once on transient failures
+        if not result.success and result.error and any(
+            term in result.error.lower()
+            for term in ("timeout", "connection", "temporarily", "503", "502")
+        ):
+            logger.warning(f"Transient order failure, retrying: {result.error}")
+            await asyncio.sleep(1)
+            result = await broker.place_order(
+                symbol=action.symbol,
+                side=action.side,
+                quantity=quantity,
+                order_type=action.order_type,
+                limit_price=action.limit_price,
+            )
 
         if result.success:
             await update_order_status(

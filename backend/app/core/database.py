@@ -327,3 +327,14 @@ async def prune_old_records(days: int = 30) -> dict[str, int]:
             counts[table] = cursor.rowcount
         await db.commit()
     return counts
+
+
+async def load_llm_config() -> dict | None:
+    """Load the most recent active LLM configuration from database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None

@@ -632,3 +632,60 @@ async def test_execute_trade_publishes_correct_event_data() -> None:
     assert event.data["side"] == "buy"
     assert event.data["quantity"] == 15.0
     assert event.data["filled_price"] == 300.25
+
+
+@pytest.mark.asyncio
+async def test_execute_trade_retries_on_transient_failure() -> None:
+    risk_engine = RiskEngine()
+    execution_engine = ExecutionEngine(risk_engine)
+
+    call_count = 0
+
+    async def place_order_with_retry(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return OrderResult(success=False, error="Connection timeout")
+        return OrderResult(success=True, broker_order_id="RETRY-001", filled_price=150.0, filled_quantity=10.0)
+
+    broker = FakeBrokerAdapter()
+    broker.place_order = place_order_with_retry
+    execution_engine.register_broker("test", broker, default=True)
+
+    action = TradeAction(
+        symbol="AAPL",
+        side="buy",
+        quantity=10.0,
+        reasoning="Test trade",
+        confidence=0.85,
+        strategy="test_strategy",
+    )
+
+    with patch(
+        "app.engines.execution_engine.log_trade_decision",
+        new_callable=AsyncMock,
+        return_value=1,
+    ), patch(
+        "app.engines.execution_engine.log_order",
+        new_callable=AsyncMock,
+        return_value=100,
+    ), patch(
+        "app.engines.execution_engine.event_bus.publish",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.update_order_status",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.engines.execution_engine.mark_decision_executed",
+        new_callable=AsyncMock,
+    ), patch.object(
+        risk_engine,
+        "check_trade",
+        return_value=RiskCheckResult(passed=True),
+    ):
+        result = await execution_engine.execute_trade(action, current_price=150.0)
+
+    assert result is not None
+    assert result.success is True
+    assert result.broker_order_id == "RETRY-001"
+    assert call_count == 2
