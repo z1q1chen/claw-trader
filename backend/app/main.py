@@ -126,6 +126,8 @@ async def lifespan(app: FastAPI):
         llm_brain.configure("gemini", "gemini-2.0-flash", settings.gemini_api_key)
     elif settings.openai_api_key:
         llm_brain.configure("openai", "gpt-4o", settings.openai_api_key)
+    elif settings.anthropic_api_key:
+        llm_brain.configure("anthropic", "claude-sonnet-4-20250514", settings.anthropic_api_key)
 
     # Wire up event handlers
     event_bus.subscribe("signal", handle_signal)

@@ -283,6 +283,87 @@ class TestEventBusWebSocketClients:
         assert data["data"]["key2"] == 42
 
 
+class TestEventBusUnsubscribe:
+    """Tests for EventBus unsubscribe functionality."""
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_removes_handler(self) -> None:
+        """Handler is removed after unsubscribe."""
+        bus = EventBus()
+        received_events = []
+
+        async def handler(event: Event) -> None:
+            received_events.append(event)
+
+        bus.subscribe("test_event", handler)
+        bus.unsubscribe("test_event", handler)
+
+        event = Event(type="test_event", data={})
+        await bus.publish(event)
+
+        assert len(received_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_nonexistent_handler(self) -> None:
+        """Unsubscribe nonexistent handler does not raise."""
+        bus = EventBus()
+
+        async def handler(event: Event) -> None:
+            pass
+
+        # Should not raise an exception
+        bus.unsubscribe("test_event", handler)
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_one_of_multiple_handlers(self) -> None:
+        """Unsubscribe removes only specified handler."""
+        bus = EventBus()
+        received_events_1 = []
+        received_events_2 = []
+
+        async def handler1(event: Event) -> None:
+            received_events_1.append(event)
+
+        async def handler2(event: Event) -> None:
+            received_events_2.append(event)
+
+        bus.subscribe("test_event", handler1)
+        bus.subscribe("test_event", handler2)
+        bus.unsubscribe("test_event", handler1)
+
+        event = Event(type="test_event", data={})
+        await bus.publish(event)
+
+        assert len(received_events_1) == 0
+        assert len(received_events_2) == 1
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_handler_does_not_affect_other_event_types(self) -> None:
+        """Unsubscribe for one event type doesn't affect other types."""
+        bus = EventBus()
+        received_events_1 = []
+        received_events_2 = []
+
+        async def handler1(event: Event) -> None:
+            received_events_1.append(event)
+
+        async def handler2(event: Event) -> None:
+            received_events_2.append(event)
+
+        bus.subscribe("event_type_1", handler1)
+        bus.subscribe("event_type_2", handler2)
+        bus.unsubscribe("event_type_1", handler1)
+
+        event1 = Event(type="event_type_1", data={})
+        event2 = Event(type="event_type_2", data={})
+
+        await bus.publish(event1)
+        await bus.publish(event2)
+
+        assert len(received_events_1) == 0
+        assert len(received_events_2) == 1
+
+
 class TestEventBusIntegration:
     """Integration tests for EventBus."""
 

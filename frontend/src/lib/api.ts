@@ -101,7 +101,7 @@ export function createWebSocket(
   onMessage: (event: any) => void
 ): { close: () => void } {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${protocol}//127.0.0.1:8000/ws`;
+  const url = `${protocol}//${window.location.host}/ws`;
   let ws: WebSocket | null = null;
   let reconnectDelay = 1000;
   let shouldReconnect = true;

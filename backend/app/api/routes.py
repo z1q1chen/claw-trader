@@ -61,7 +61,7 @@ async def get_llm_config():
         row = await cursor.fetchone()
         if row:
             return dict(row)
-        return {"provider": "gemini", "model_name": "gemini-2.0-flash", "api_key": "", "is_active": True}
+        return {"provider": "gemini", "model_name": "gemini-2.0-flash", "api_key": "", "base_url": "", "is_active": True}
 
 
 @router.post("/api/llm/config")
@@ -69,9 +69,9 @@ async def update_llm_config(req: LLMConfigRequest):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE llm_config SET is_active = 0")
         await db.execute(
-            """INSERT INTO llm_config (provider, model_name, api_key, is_active)
-               VALUES (?, ?, ?, 1)""",
-            (req.provider, req.model_name, req.api_key),
+            """INSERT INTO llm_config (provider, model_name, api_key, base_url, is_active)
+               VALUES (?, ?, ?, ?, 1)""",
+            (req.provider, req.model_name, req.api_key, req.base_url or ""),
         )
         await db.commit()
 
@@ -323,6 +323,13 @@ async def manual_trade(req: ManualTradeRequest):
     from app.main import execution_engine
     from app.engines.llm_brain import TradeAction
     from app.core.logging import logger
+
+    if req.quantity <= 0:
+        raise HTTPException(status_code=422, detail="Quantity must be positive")
+    if req.side not in ("buy", "sell"):
+        raise HTTPException(status_code=422, detail="Side must be 'buy' or 'sell'")
+    if not req.symbol.strip():
+        raise HTTPException(status_code=422, detail="Symbol is required")
 
     action = TradeAction(
         symbol=req.symbol,

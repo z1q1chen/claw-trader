@@ -22,6 +22,7 @@ async def init_db() -> None:
                 provider TEXT NOT NULL DEFAULT 'gemini',
                 model_name TEXT NOT NULL DEFAULT 'gemini-2.0-flash',
                 api_key TEXT NOT NULL DEFAULT '',
+                base_url TEXT DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
