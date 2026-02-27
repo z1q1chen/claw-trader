@@ -22,6 +22,14 @@ interface EventLogEntry {
 }
 
 export default function Dashboard() {
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('claw-trader-theme');
+      if (saved) return saved === 'dark';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
   const [health, setHealth] = useState<string>("connecting...");
   const [llmConfig, setLlmConfig] = useState<LLMConfig>({
     provider: "gemini",
@@ -134,6 +142,11 @@ export default function Dashboard() {
     wsRef.current = conn;
     return () => conn.close();
   }, [refreshData]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    localStorage.setItem('claw-trader-theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   const saveLLMConfig = async () => {
     setLlmStatus(null);
@@ -272,6 +285,12 @@ export default function Dashboard() {
             />
             {wsConnected ? "Live" : "Polling"}
           </span>
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: 'var(--text)' }}
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
           <button
             className={`kill-switch ${killSwitch ? "active" : ""}`}
             onClick={handleKillSwitch}

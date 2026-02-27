@@ -13,6 +13,34 @@ from app.core.events import Event, event_bus
 from app.core.logging import logger
 
 
+async def _retry_with_backoff(
+    coro_func,
+    max_retries: int = 2,
+    base_wait_s: float = 2.0,
+) -> Any:
+    """Retry async function with exponential backoff on rate limit errors."""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_func()
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = (
+                "429" in str(e) or
+                "rate limit" in error_str or
+                "too many requests" in error_str
+            )
+            if not is_rate_limit or attempt == max_retries:
+                raise
+            last_error = e
+            wait_time = base_wait_s * (2 ** attempt)
+            logger.warning(
+                f"Rate limit error, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
+            )
+            await asyncio.sleep(wait_time)
+    raise last_error if last_error else Exception("Max retries exceeded")
+
+
 @dataclass
 class TradeAction:
     symbol: str
@@ -106,14 +134,17 @@ class OpenAICompatibleProvider(LLMProvider):
         client = await self._get_client()
         start = time.monotonic()
 
-        response = await client.chat.completions.create(
-            model=self.model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        async def _make_request():
+            return await client.chat.completions.create(
+                model=self.model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+
+        response = await _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0)
 
         latency = (time.monotonic() - start) * 1000
         usage = response.usage
@@ -143,12 +174,15 @@ class AnthropicProvider(LLMProvider):
         client = await self._get_client()
         start = time.monotonic()
 
-        response = await client.messages.create(
-            model=self.model,
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
+        async def _make_request():
+            return await client.messages.create(
+                model=self.model,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+
+        response = await _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0)
 
         latency = (time.monotonic() - start) * 1000
         content = response.content[0].text if response.content else ""
@@ -229,6 +263,7 @@ class LLMBrain:
         self._positions: dict[str, float] = {}
         self._daily_pnl: float = 0.0
         self._total_exposure: float = 0.0
+        self._call_semaphore = asyncio.Semaphore(1)
 
     def configure(self, provider: str, model: str, api_key: str, base_url: str | None = None) -> None:
         self._provider_name = provider
@@ -290,9 +325,10 @@ class LLMBrain:
             ) or len(data.get("symbol", "")) > 20  # condition IDs are long hex strings
 
             system_prompt = POLYMARKET_SYSTEM_PROMPT if is_prediction_market else TRADE_DECISION_SYSTEM_PROMPT
-            response = await self._provider.complete(
-                system_prompt, user_prompt
-            )
+            async with self._call_semaphore:
+                response = await self._provider.complete(
+                    system_prompt, user_prompt
+                )
 
             await log_api_usage(
                 provider=response.provider,

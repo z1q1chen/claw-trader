@@ -785,3 +785,54 @@ def test_polymarket_prompt_detected_for_long_symbol():
     assert "prediction market" in POLYMARKET_SYSTEM_PROMPT.lower()
     assert "quantitative trading" in TRADE_DECISION_SYSTEM_PROMPT.lower()
     assert POLYMARKET_SYSTEM_PROMPT != TRADE_DECISION_SYSTEM_PROMPT
+
+
+# ============================================================================
+# LLMBrain Semaphore and Concurrency Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_llm_semaphore_serializes_concurrent_calls():
+    """Test that concurrent calls are serialized by the semaphore."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "TEST",
+            "quantity": 10,
+            "confidence": 0.85,
+            "reasoning": "Test",
+        }
+    )
+    brain._provider = FakeLLMProvider(response_content)
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "TEST",
+            "signal_type": "test",
+            "value": 50.0,
+            "price": 100.0,
+            "metadata": {},
+        },
+    )
+
+    call_times = []
+
+    async def track_call():
+        import time
+        call_times.append(time.monotonic())
+        with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+            with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+                # Reset rate limiting to allow this call
+                brain._last_call_time = 0
+                await brain.decide(signal_event)
+        call_times.append(time.monotonic())
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            # Reset rate limiting
+            brain._last_call_time = 0
+            first_result = await brain.decide(signal_event)
+            assert first_result is not None

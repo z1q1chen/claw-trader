@@ -248,3 +248,61 @@ async def test_prune_old_records_parameterized(temp_db):
         await db.commit()
     result = await prune_old_records(30)
     assert result["signals"] >= 1
+
+
+# ============================================================================
+# Database Migration Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_run_migrations_creates_table(temp_db):
+    """Test that run_migrations creates schema_migrations table."""
+    from app.core.database import run_migrations
+    await run_migrations()
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+        )
+        result = await cursor.fetchone()
+    assert result is not None
+    assert result[0] == "schema_migrations"
+
+
+@pytest.mark.asyncio
+async def test_run_migrations_applies_base_migration(temp_db):
+    """Test that run_migrations applies version 1 migration."""
+    from app.core.database import run_migrations
+    await run_migrations()
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute(
+            "SELECT version, description FROM schema_migrations WHERE version = 1"
+        )
+        result = await cursor.fetchone()
+    assert result is not None
+    assert result[0] == 1
+    assert result[1] == "Initial schema"
+
+
+@pytest.mark.asyncio
+async def test_run_migrations_idempotent(temp_db):
+    """Test that run_migrations is idempotent (can be called multiple times)."""
+    from app.core.database import run_migrations
+    await run_migrations()
+    await run_migrations()
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM schema_migrations")
+        result = await cursor.fetchone()
+    # Should only have one entry for version 1, not duplicates
+    assert result[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_migrations_tracks_version(temp_db):
+    """Test that run_migrations tracks applied versions correctly."""
+    from app.core.database import run_migrations
+    await run_migrations()
+    async with aiosqlite.connect(temp_db) as db:
+        cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
+        result = await cursor.fetchone()
+    assert result[0] == 1

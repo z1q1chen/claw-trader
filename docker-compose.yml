@@ -9,12 +9,14 @@ services:
       - .env
     volumes:
       - db-data:/app/data
+      - backend-logs:/app/logs
     environment:
       - CT_DATABASE_URL=sqlite+aiosqlite:///data/claw_trader.db
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
 
   frontend:
@@ -25,6 +27,13 @@ services:
       - backend
     environment:
       - NEXT_PUBLIC_API_URL=http://backend:8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   db-data:
+  backend-logs:

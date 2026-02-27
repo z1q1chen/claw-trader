@@ -309,3 +309,108 @@ class TestPolymarketGetMarketPrices:
         with patch.object(adapter, "get_market", new_callable=AsyncMock, side_effect=Exception("API Error")):
             prices = await adapter.get_market_prices("market1")
             assert prices == {}
+
+
+# ============================================================================
+# Polymarket HMAC Signing Tests
+# ============================================================================
+
+
+class TestPolymarketSigning:
+    def test_sign_order_adds_signature_field(self):
+        """Test that _sign_order adds signature and timestamp fields."""
+        with patch("app.brokers.polymarket.settings") as mock_settings:
+            mock_settings.polymarket_private_key = "test_secret_key"
+            mock_settings.polygon_rpc_url = ""
+            mock_settings.polymarket_api_key = ""
+            adapter = PolymarketAdapter()
+
+            order_data = {
+                "tokenID": "token123",
+                "price": 0.55,
+                "size": 10.0,
+                "side": "BUY",
+            }
+
+            signed_order = adapter._sign_order(order_data)
+
+            assert "signature" in signed_order
+            assert "timestamp" in signed_order
+            assert signed_order["tokenID"] == "token123"
+            assert signed_order["price"] == 0.55
+
+    def test_sign_order_without_private_key(self):
+        """Test that _sign_order returns data unchanged without private key."""
+        with patch("app.brokers.polymarket.settings") as mock_settings:
+            mock_settings.polymarket_private_key = ""
+            mock_settings.polygon_rpc_url = ""
+            mock_settings.polymarket_api_key = ""
+            adapter = PolymarketAdapter()
+
+            order_data = {
+                "tokenID": "token123",
+                "price": 0.55,
+                "size": 10.0,
+                "side": "BUY",
+            }
+
+            signed_order = adapter._sign_order(order_data)
+
+            assert "signature" not in signed_order
+            assert "timestamp" not in signed_order
+            assert signed_order == order_data
+
+    def test_sign_order_signature_deterministic(self):
+        """Test that signing the same order produces consistent signature."""
+        with patch("app.brokers.polymarket.settings") as mock_settings:
+            mock_settings.polymarket_private_key = "test_secret_key"
+            mock_settings.polygon_rpc_url = ""
+            mock_settings.polymarket_api_key = ""
+            adapter = PolymarketAdapter()
+
+            order_data = {
+                "tokenID": "token123",
+                "price": 0.55,
+                "size": 10.0,
+                "side": "BUY",
+            }
+
+            # Mock time to ensure same timestamp
+            with patch("app.brokers.polymarket.time_module.time", return_value=1234567890):
+                signed1 = adapter._sign_order(order_data.copy())
+
+            with patch("app.brokers.polymarket.time_module.time", return_value=1234567890):
+                signed2 = adapter._sign_order(order_data.copy())
+
+            assert signed1["signature"] == signed2["signature"]
+            assert signed1["timestamp"] == signed2["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_place_order_includes_signature(self, adapter):
+        """Test that place_order includes signature in request."""
+        adapter._api_key = "test_key"
+        adapter._private_key = "test_secret"
+
+        market_data = {
+            "tokens": [
+                {"token_id": "yes_token", "price": 0.6},
+                {"token_id": "no_token", "price": 0.4}
+            ]
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"id": "order_123"}
+
+        with patch.object(adapter, "get_market", new_callable=AsyncMock, return_value=market_data):
+            with patch.object(adapter._http, "post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
+                await adapter.place_order("test_id", "buy", 10.0, limit_price=0.55)
+
+                # Verify that post was called with signature in body
+                mock_post.assert_called_once()
+                call_args = mock_post.call_args
+                posted_data = call_args[1]["json"]
+
+                assert "signature" in posted_data
+                assert "timestamp" in posted_data
+                assert posted_data["tokenID"] == "yes_token"

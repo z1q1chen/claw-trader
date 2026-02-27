@@ -88,6 +88,53 @@ async def test_rate_limit_independent_per_ip():
     assert call_next.call_count == 4
 
 
+@pytest.mark.asyncio
+async def test_rate_limit_sensitive_path_lower_limit():
+    """Sensitive endpoints should have tighter rate limit."""
+    app = MagicMock()
+    middleware = RateLimitMiddleware(app, requests_per_minute=100)
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+    # Request to sensitive endpoint (/api/trade)
+    sensitive_req = make_request(path="/api/trade")
+
+    # Should allow up to _SENSITIVE_RPM (30) requests
+    responses = []
+    for _ in range(35):
+        response = await middleware.dispatch(sensitive_req, call_next)
+        responses.append(response)
+
+    # First 30 should succeed (200), next ones should be 429
+    successful = sum(1 for r in responses if r.status_code == 200)
+    limited = sum(1 for r in responses if r.status_code == 429)
+
+    assert successful == 30
+    assert limited == 5
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_non_sensitive_path_normal_limit():
+    """Non-sensitive endpoints should use normal rate limit."""
+    app = MagicMock()
+    middleware = RateLimitMiddleware(app, requests_per_minute=5)
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+    # Request to non-sensitive endpoint
+    normal_req = make_request(path="/api/markets")
+
+    responses = []
+    for _ in range(7):
+        response = await middleware.dispatch(normal_req, call_next)
+        responses.append(response)
+
+    # First 5 should succeed, next should be limited
+    successful = sum(1 for r in responses if r.status_code == 200)
+    limited = sum(1 for r in responses if r.status_code == 429)
+
+    assert successful == 5
+    assert limited == 2
+
+
 class TestJSONFormatter:
     """Test JSON logging formatter."""
 

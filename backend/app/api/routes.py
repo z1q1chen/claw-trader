@@ -356,9 +356,21 @@ async def websocket_endpoint(ws: WebSocket):
     event_bus.register_ws_client(queue)
 
     try:
-        while True:
-            msg = await queue.get()
-            await ws.send_text(msg)
+        async def send_loop():
+            while True:
+                msg = await queue.get()
+                await ws.send_text(msg)
+
+        async def receive_loop():
+            while True:
+                data = await ws.receive_json()
+                command = data.get("command")
+                if command == "kill_switch":
+                    await event_bus.publish(Event(type="kill_switch_toggle", data={"active": data.get("active", True)}))
+                elif command == "refresh":
+                    pass
+
+        await asyncio.gather(send_loop(), receive_loop())
     except WebSocketDisconnect:
         pass
     finally:

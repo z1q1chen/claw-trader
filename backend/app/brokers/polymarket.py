@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import time as time_module
 from typing import Any
 
 import httpx
@@ -38,6 +41,21 @@ class PolymarketAdapter(BrokerAdapter):
             from web3 import Web3
             self._web3 = Web3(Web3.HTTPProvider(self._rpc_url))
         return self._web3
+
+    def _sign_order(self, order_data: dict) -> dict:
+        """Add HMAC signature to order request."""
+        if not self._private_key:
+            return order_data
+        timestamp = str(int(time_module.time()))
+        message = f"{timestamp}{json.dumps(order_data, separators=(',', ':'))}"
+        signature = hmac.new(
+            self._private_key.encode(),
+            message.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        order_data["timestamp"] = timestamp
+        order_data["signature"] = signature
+        return order_data
 
     async def get_trending_markets(self, limit: int = 10) -> list[dict]:
         resp = await self._http.get(
@@ -136,6 +154,8 @@ class PolymarketAdapter(BrokerAdapter):
                 "size": quantity,
                 "side": clob_side,
             }
+
+            order_body = self._sign_order(order_body)
 
             response = await self._http.post(
                 f"{CLOB_API_BASE}/order",

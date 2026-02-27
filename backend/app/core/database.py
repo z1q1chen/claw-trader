@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.logging import logger
 
 
 def _get_db_path() -> str:
@@ -17,6 +18,39 @@ def _get_db_path() -> str:
 
 
 DB_PATH = _get_db_path()
+
+
+MIGRATIONS = [
+    (1, "Initial schema", None),
+]
+
+
+async def run_migrations() -> None:
+    """Run pending database migrations."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                description TEXT NOT NULL,
+                applied_at TEXT DEFAULT (datetime('now'))
+            )"""
+        )
+        await db.commit()
+
+        cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
+        row = await cursor.fetchone()
+        current = row[0] if row[0] is not None else 0
+
+        for version, description, sql in MIGRATIONS:
+            if version > current:
+                if sql:
+                    await db.execute(sql)
+                await db.execute(
+                    "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+                    (version, description),
+                )
+                logger.info(f"Applied migration {version}: {description}")
+        await db.commit()
 
 
 async def get_db() -> aiosqlite.Connection:
@@ -143,6 +177,8 @@ async def init_db() -> None:
                 ON trade_decisions (created_at);
         """)
         await db.commit()
+
+    await run_migrations()
 
 
 async def log_api_usage(

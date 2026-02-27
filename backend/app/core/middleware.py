@@ -15,7 +15,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     Limits requests per client IP per time window.
     Skips rate limiting for WebSocket upgrades and health checks.
+    Applies tighter limits to sensitive endpoints.
     """
+
+    _SENSITIVE_PATHS = {"/api/trade", "/api/broker/connect", "/api/config/llm"}
+    _SENSITIVE_RPM = 30
 
     def __init__(self, app, requests_per_minute: int = 120):
         super().__init__(app)
@@ -37,8 +41,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if now - t < self.window_seconds
         ]
 
-        if len(self._request_counts[client_ip]) >= self.requests_per_minute:
-            logger.warning(f"Rate limit exceeded for {client_ip}")
+        # Determine rate limit based on endpoint sensitivity
+        is_sensitive = any(
+            request.url.path.startswith(path) for path in self._SENSITIVE_PATHS
+        )
+        limit = self._SENSITIVE_RPM if is_sensitive else self.requests_per_minute
+
+        if len(self._request_counts[client_ip]) >= limit:
+            logger.warning(f"Rate limit exceeded for {client_ip} on {request.url.path}")
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests. Please slow down."},

