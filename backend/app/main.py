@@ -81,6 +81,18 @@ async def handle_webhook_dispatch(event: Event) -> None:
     await webhook_manager.dispatch(event.type, event.data)
 
 
+async def supervised(name: str, coro_func, restart_delay: float = 5.0):
+    """Supervise a task, restarting it on exception."""
+    while True:
+        try:
+            await coro_func()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Task '{name}' crashed: {e}, restarting in {restart_delay}s")
+            await asyncio.sleep(restart_delay)
+
+
 async def periodic_daily_reset() -> None:
     """Reset risk metrics at midnight UTC each day."""
     while True:
@@ -225,6 +237,11 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await init_db()
 
+    # Validate CORS configuration
+    if "*" in settings.cors_origins and settings.auth_enabled:
+        logger.error("DANGEROUS: CORS wildcard '*' is enabled with auth_enabled=True. This allows all origins with credentials. Replacing with localhost origins.")
+        settings.cors_origins = ["http://localhost", "http://localhost:3000", "http://localhost:5173"]
+
     # Validate minimum configuration
     has_llm = bool(settings.gemini_api_key or settings.openai_api_key or settings.anthropic_api_key)
     if not has_llm:
@@ -288,16 +305,16 @@ async def lifespan(app: FastAPI):
         logger.info("Polymarket broker auto-connected (API key found)")
 
     # Start periodic portfolio sync
-    sync_task = asyncio.create_task(periodic_portfolio_sync())
+    sync_task = asyncio.create_task(supervised("periodic_portfolio_sync", periodic_portfolio_sync))
 
     # Start daily reset task
-    reset_task = asyncio.create_task(periodic_daily_reset())
+    reset_task = asyncio.create_task(supervised("periodic_daily_reset", periodic_daily_reset))
 
     # Start order reconciliation task
-    reconciliation_task = asyncio.create_task(periodic_order_reconciliation())
+    reconciliation_task = asyncio.create_task(supervised("periodic_order_reconciliation", periodic_order_reconciliation))
 
     # Start order expiry task
-    expiry_task = asyncio.create_task(periodic_expire_orders())
+    expiry_task = asyncio.create_task(supervised("periodic_expire_orders", periodic_expire_orders))
 
     # Start signal engine with appropriate feed
     if settings.polymarket_condition_ids:
@@ -316,6 +333,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Claw Trader...")
     await feed.stop()
     signal_engine.stop()
+
+    for broker_name, broker in execution_engine._brokers.items():
+        if hasattr(broker, 'disconnect'):
+            try:
+                await broker.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting broker {broker_name}: {e}")
+        logger.info(f"Broker '{broker_name}' disconnected")
 
     for task_name, task in [("signal", signal_task), ("sync", sync_task), ("reset", reset_task), ("reconciliation", reconciliation_task), ("expiry", expiry_task)]:
         task.cancel()

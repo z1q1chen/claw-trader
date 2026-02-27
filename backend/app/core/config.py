@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     # LLM
     llm_min_call_interval_s: float = 2.0
+    llm_request_timeout_s: float = 30.0
 
     # Portfolio sync
     portfolio_sync_interval_s: float = 30.0

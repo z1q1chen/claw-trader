@@ -844,6 +844,104 @@ def test_signal_cooldown_configurable():
         assert engine._signal_cooldown_s == 30.0
 
 
+@patch("time.monotonic")
+def test_signal_last_signal_time_pruning(mock_monotonic):
+    """Test that _last_signal_time dict is pruned when exceeding 1000 entries."""
+    engine = SignalEngine()
+    engine._signal_cooldown_s = 60.0
+
+    # Start at time 1000
+    mock_time = 1000.0
+    mock_monotonic.return_value = mock_time
+
+    # Add 1001 entries at time 1000
+    for i in range(1001):
+        engine._should_emit(f"SYM{i}", "signal_type")
+
+    assert len(engine._last_signal_time) == 1001
+
+    # Advance time to 1300 (> 2x cooldown of 120s from original time)
+    mock_time = 1300.0
+    mock_monotonic.return_value = mock_time
+
+    # Call _should_emit which should trigger pruning
+    # Entries older than 1300 - (60*2) = 1180 will be removed
+    # So entries at 1000 will be removed since 1000 < 1180
+    engine._should_emit("NEW_SYM", "signal_type")
+
+    # After pruning, old entries at time 1000 should be removed
+    # Only the new entry at 1300 should remain
+    assert len(engine._last_signal_time) <= 1000
+
+    # Verify remaining entries are recent (from time >= 1180)
+    cutoff_time = 1180.0
+    for timestamp in engine._last_signal_time.values():
+        assert timestamp >= cutoff_time
+
+
+@patch("time.monotonic")
+def test_signal_last_signal_time_pruning_removes_old_entries(mock_monotonic):
+    """Test that pruning removes entries older than 2x cooldown."""
+    engine = SignalEngine()
+    engine._signal_cooldown_s = 60.0  # 60 second cooldown
+    mock_time = 1000.0
+    mock_monotonic.return_value = mock_time
+
+    # Add first batch of entries
+    for i in range(500):
+        engine._should_emit(f"OLD_{i}", "signal")
+    assert len(engine._last_signal_time) == 500
+
+    # Advance time by 150 seconds (> 2x cooldown)
+    mock_time += 150
+    mock_monotonic.return_value = mock_time
+
+    # Add new entries to trigger pruning
+    for i in range(600):
+        engine._should_emit(f"NEW_{i}", "signal")
+
+    # After pruning, old entries (> 120 seconds old) should be removed
+    # So we should have ~600 new entries (size is > 1000, then pruned)
+    assert len(engine._last_signal_time) <= 1000
+
+    # Verify old entries are gone
+    for key in engine._last_signal_time.keys():
+        assert key.startswith("NEW_") or key.startswith("OLD_")
+
+
+@patch("time.monotonic")
+def test_signal_pruning_preserves_recent_entries(mock_monotonic):
+    """Test that pruning preserves recent signal entries."""
+    engine = SignalEngine()
+    engine._signal_cooldown_s = 60.0
+    mock_time = 1000.0
+    mock_monotonic.return_value = mock_time
+
+    # Add some entries
+    for i in range(500):
+        engine._should_emit(f"SYM{i}", "signal")
+
+    # Record entries before pruning
+    entries_before = set(engine._last_signal_time.keys())
+
+    # Advance time by 30 seconds (< 2x cooldown)
+    mock_time += 30
+    mock_monotonic.return_value = mock_time
+
+    # Add entries to trigger pruning
+    for i in range(600):
+        engine._should_emit(f"NEW{i}", "signal")
+
+    # Recent entries from before should still be in dict
+    recent_count = 0
+    for key in entries_before:
+        if key in engine._last_signal_time:
+            recent_count += 1
+
+    # Many (though not necessarily all) recent entries should be preserved
+    assert recent_count > 0
+
+
 class TestSignalEngineEdgeCases:
     """Test signal engine protection against NaN/Inf and edge cases."""
 

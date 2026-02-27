@@ -1166,3 +1166,38 @@ async def test_decide_boundary_values():
 
             assert result is not None
             assert result.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_llm_timeout_returns_none():
+    """Test that LLM request timeout is handled gracefully."""
+    import asyncio
+    brain = LLMBrain()
+
+    class TimeoutLLMProvider(LLMProvider):
+        async def complete(self, system_prompt: str, user_prompt: str) -> LLMResponse:
+            await asyncio.sleep(100)
+            return None
+
+    brain._provider = TimeoutLLMProvider()
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "AAPL",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.settings.llm_request_timeout_s", 0.01):
+        with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+            with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+                brain._last_call_time = 0
+                result = await brain.decide(signal_event)
+
+                assert result is None
+                assert brain._last_call_success is False
+                assert "timed out" in brain._last_call_error.lower()

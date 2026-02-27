@@ -86,17 +86,24 @@ class GeminiProvider(LLMProvider):
         start = time.monotonic()
 
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: client.models.generate_content(
-                model=self.model,
-                contents=user_prompt,
-                config={
-                    "system_instruction": system_prompt,
-                    "response_mime_type": "application/json",
-                },
-            ),
-        )
+        try:
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=self.model,
+                        contents=user_prompt,
+                        config={
+                            "system_instruction": system_prompt,
+                            "response_mime_type": "application/json",
+                        },
+                    ),
+                ),
+                timeout=settings.llm_request_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Gemini API request timed out after {settings.llm_request_timeout_s}s")
+            return None
 
         latency = (time.monotonic() - start) * 1000
         usage = response.usage_metadata
@@ -144,7 +151,14 @@ class OpenAICompatibleProvider(LLMProvider):
                 ],
             )
 
-        response = await _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0)
+        try:
+            response = await asyncio.wait_for(
+                _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0),
+                timeout=settings.llm_request_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"OpenAI-compatible API request timed out after {settings.llm_request_timeout_s}s")
+            return None
 
         latency = (time.monotonic() - start) * 1000
         usage = response.usage
@@ -182,7 +196,14 @@ class AnthropicProvider(LLMProvider):
                 messages=[{"role": "user", "content": user_prompt}],
             )
 
-        response = await _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0)
+        try:
+            response = await asyncio.wait_for(
+                _retry_with_backoff(_make_request, max_retries=2, base_wait_s=2.0),
+                timeout=settings.llm_request_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Anthropic API request timed out after {settings.llm_request_timeout_s}s")
+            return None
 
         latency = (time.monotonic() - start) * 1000
         content = response.content[0].text if response.content else ""
@@ -350,6 +371,11 @@ class LLMBrain:
                 response = await self._provider.complete(
                     system_prompt, user_prompt
                 )
+
+            if response is None:
+                self._last_call_success = False
+                self._last_call_error = "LLM request timed out"
+                return None
 
             await log_api_usage(
                 provider=response.provider,

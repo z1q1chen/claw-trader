@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.logging import logger
 from app.engines.execution_engine import BrokerAdapter, OrderResult
 
 
@@ -199,9 +200,10 @@ class PolymarketAdapter(BrokerAdapter):
                 )
 
         except Exception as e:
+            logger.error(f"Order placement error: {e}")
             return OrderResult(
                 success=False,
-                error=f"Order placement failed: {str(e)}",
+                error="Order placement failed: internal broker error",
             )
 
     async def get_positions(self) -> dict[str, dict[str, Any]]:
@@ -327,5 +329,6 @@ class PolymarketAdapter(BrokerAdapter):
                 headers=headers,
             )
             return response.status_code in (200, 204)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Cancel order error: {e}")
             return False

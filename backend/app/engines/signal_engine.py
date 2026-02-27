@@ -165,6 +165,15 @@ class SignalEngine:
         if now - last < self._signal_cooldown_s:
             return False
         self._last_signal_time[key] = now
+
+        # Prune old entries if dict exceeds 1000 entries
+        if len(self._last_signal_time) > 1000:
+            cutoff_time = now - (self._signal_cooldown_s * 2)
+            self._last_signal_time = {
+                k: v for k, v in self._last_signal_time.items()
+                if v > cutoff_time
+            }
+
         return True
 
     def _detect_signals(

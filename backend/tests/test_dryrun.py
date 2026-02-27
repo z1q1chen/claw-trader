@@ -412,3 +412,30 @@ async def test_state_persistence_save_and_load() -> None:
     # Clean up
     if STATE_FILE.exists():
         STATE_FILE.unlink()
+
+
+@pytest.mark.asyncio
+async def test_atomic_state_write() -> None:
+    """Test that state file survives atomic write (verify file exists after write)."""
+    # Clean up any existing state file
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
+
+    # Create broker and place orders
+    broker = DryRunBrokerAdapter()
+    await broker.place_order("AAPL", "BUY", 10.0, limit_price=150.0)
+
+    # Verify state file exists after save_state
+    assert STATE_FILE.exists(), "State file should exist after atomic write"
+
+    # Verify state file contains valid JSON
+    with open(STATE_FILE, "r") as f:
+        state_data = json.load(f)
+    assert "balance" in state_data
+    assert "positions" in state_data
+    assert "order_counter" in state_data
+    assert len(state_data["positions"]) > 0
+
+    # Clean up
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()

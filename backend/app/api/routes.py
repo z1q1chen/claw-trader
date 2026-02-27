@@ -225,6 +225,8 @@ async def update_llm_config(req: LLMConfigRequest):
 
 @router.get("/api/usage")
 async def get_api_usage(limit: int = 100, offset: int = 0):
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -261,6 +263,8 @@ async def get_api_usage_summary():
 
 @router.get("/api/decisions")
 async def get_trade_decisions(limit: int = 50, offset: int = 0):
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -276,6 +280,8 @@ async def get_trade_decisions(limit: int = 50, offset: int = 0):
 
 @router.get("/api/orders")
 async def get_orders(limit: int = 50, offset: int = 0):
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -354,6 +360,8 @@ async def get_risk_snapshot():
 
 @router.get("/api/risk/history")
 async def get_risk_history(limit: int = 100, offset: int = 0):
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -435,6 +443,8 @@ async def get_live_risk():
 
 @router.get("/api/signals")
 async def get_recent_signals(limit: int = 100, offset: int = 0):
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -448,6 +458,8 @@ async def get_recent_signals(limit: int = 100, offset: int = 0):
 
 @router.get("/api/journal")
 async def get_journal(limit: int = 50, offset: int = 0, symbol: str | None = None):
+    limit = min(max(limit, 1), 1000)
+    offset = max(offset, 0)
     entries = await get_trade_journal(limit, offset, symbol)
     total = await count_journal_entries(symbol)
     return paginated_response(entries, total, limit, offset)
@@ -478,7 +490,10 @@ async def websocket_endpoint(ws: WebSocket):
         async def send_loop():
             while True:
                 msg = await queue.get()
-                await ws.send_text(msg)
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    break
 
         async def receive_loop():
             while True:
@@ -604,6 +619,7 @@ async def cancel_order(order_id: str, req: CancelOrderRequest):
 
 @router.get("/api/orders/broker/{broker}")
 async def get_broker_order_history(broker: str, limit: int = 50):
+    limit = min(max(limit, 1), 1000)
     from app.main import execution_engine
     if broker not in execution_engine._brokers:
         raise HTTPException(status_code=404, detail=f"Broker {broker} not registered")
@@ -619,6 +635,7 @@ async def get_broker_order_history(broker: str, limit: int = 50):
 
 @router.get("/api/markets/trending")
 async def get_trending_markets(limit: int = 10):
+    limit = min(max(limit, 1), 1000)
     from app.main import execution_engine
     broker = execution_engine._brokers.get("polymarket")
     if broker is None:
@@ -629,6 +646,7 @@ async def get_trending_markets(limit: int = 10):
 
 @router.get("/api/markets/search")
 async def search_markets(q: str, limit: int = 10):
+    limit = min(max(limit, 1), 1000)
     from app.main import execution_engine
     broker = execution_engine._brokers.get("polymarket")
     if broker is None:
@@ -1006,6 +1024,7 @@ async def export_trades(format: str = "csv"):
 @router.get("/api/export/signals")
 async def export_signals(limit: int = 1000, format: str = "csv"):
     """Export signals as CSV or JSON."""
+    limit = min(max(limit, 1), 1000)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -1027,6 +1046,7 @@ async def export_signals(limit: int = 1000, format: str = "csv"):
 @router.get("/api/export/decisions")
 async def export_decisions(limit: int = 1000, format: str = "csv"):
     """Export trade decisions as CSV or JSON."""
+    limit = min(max(limit, 1), 1000)
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(

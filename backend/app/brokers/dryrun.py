@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -41,7 +43,7 @@ class DryRunBrokerAdapter(BrokerAdapter):
             logger.warning(f"Failed to load DryRun state: {e}, starting with defaults")
 
     def save_state(self) -> None:
-        """Save broker state to persistent storage."""
+        """Save broker state to persistent storage atomically."""
         try:
             STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             state = {
@@ -50,8 +52,15 @@ class DryRunBrokerAdapter(BrokerAdapter):
                 "orders": self._order_history,
                 "order_counter": self._order_counter,
             }
-            with open(STATE_FILE, "w") as f:
-                json.dump(state, f, indent=2)
+            # Write to temporary file first, then atomically replace target
+            fd, temp_path = tempfile.mkstemp(dir=STATE_FILE.parent, prefix=".dryrun_state_", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(state, f, indent=2)
+                os.replace(temp_path, STATE_FILE)
+            except Exception:
+                os.unlink(temp_path)
+                raise
         except Exception as e:
             logger.warning(f"Failed to save DryRun state: {e}")
 
