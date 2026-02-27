@@ -834,5 +834,15 @@ async def test_signal_engine_run_publishes_events():
     assert engine._running is False
 
 
+def test_signal_cooldown_configurable():
+    """Signal engine cooldown should be configurable."""
+    from app.engines.signal_engine import SignalEngine
+    from unittest.mock import patch
+    with patch("app.engines.signal_engine.settings") as mock_settings:
+        mock_settings.signal_cooldown_s = 30.0
+        engine = SignalEngine()
+        assert engine._signal_cooldown_s == 30.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

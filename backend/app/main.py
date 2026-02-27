@@ -170,8 +170,12 @@ async def lifespan(app: FastAPI):
     # Start daily reset task
     reset_task = asyncio.create_task(periodic_daily_reset())
 
-    # Start signal engine with dummy feed (replace with IBKR feed in production)
-    feed = DummyPriceFeed(settings.price_feed_symbols)
+    # Start signal engine with appropriate feed
+    if settings.polymarket_condition_ids:
+        from app.feeds.polymarket_feed import PolymarketPriceFeed
+        feed = PolymarketPriceFeed(settings.polymarket_condition_ids)
+    else:
+        feed = DummyPriceFeed(settings.price_feed_symbols)
     await feed.start()
     signal_task = asyncio.create_task(signal_engine.run(feed))
 

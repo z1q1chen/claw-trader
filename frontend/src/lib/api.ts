@@ -121,6 +121,9 @@ export const api = {
   // Broker Orders
   getBrokerOrders: (broker: string, limit = 50) =>
     fetchJSON<Order[]>(`/orders/broker/${broker}?limit=${limit}`),
+
+  // Stats
+  getStats: () => fetchJSON<Record<string, unknown>>("/stats"),
 };
 
 export function createWebSocket(

@@ -171,6 +171,30 @@ class TestPositionEndpoints:
             assert response.status_code == 200
 
 
+class TestTradeStatsEndpoint:
+    def test_get_trade_stats(self, client):
+        with patch("app.api.routes.aiosqlite.connect") as mock_connect:
+            # Mock the async context manager
+            mock_db = AsyncMock()
+            mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_db.__aexit__ = AsyncMock(return_value=None)
+            mock_connect.return_value = mock_db
+
+            # Mock cursor
+            mock_cursor = AsyncMock()
+            mock_cursor.fetchone = AsyncMock(return_value={"count": 10})
+            mock_cursor.fetchall = AsyncMock(return_value=[])
+            mock_db.execute = AsyncMock(return_value=mock_cursor)
+
+            response = client.get("/api/stats")
+            assert response.status_code == 200
+            data = response.json()
+            assert "total_filled_orders" in data
+            assert "total_decisions" in data
+            assert "trades_by_side" in data
+            assert "total_api_cost_usd" in data
+
+
 def test_mask_key():
     from app.api.routes import _mask_key
     assert _mask_key("") == ""

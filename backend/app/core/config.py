@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     polymarket_private_key: str = ""
     polymarket_api_key: str = ""
     polygon_rpc_url: str = ""
+    polymarket_condition_ids: list[str] = Field(default_factory=list)
 
     # LLM
     anthropic_api_key: str = ""
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
 
     # Signal engine
     signal_scan_interval_ms: int = 500
+    signal_cooldown_s: float = 60.0
     price_feed_symbols: list[str] = Field(default_factory=lambda: ["AAPL", "MSFT", "GOOGL", "AMZN", "SPY"])
 
     # LLM

@@ -448,6 +448,69 @@ async def search_markets(q: str, limit: int = 10):
     return markets
 
 
+# --- Trade Statistics ---
+
+@router.get("/api/stats")
+async def get_trade_stats():
+    """Aggregate trade statistics."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Total trades
+        cursor = await db.execute("SELECT COUNT(*) as count FROM orders WHERE status = 'filled'")
+        row = await cursor.fetchone()
+        total_trades = row["count"] if row else 0
+
+        # Win/loss from decisions
+        cursor = await db.execute("""
+            SELECT
+                COUNT(*) as total_decisions,
+                SUM(CASE WHEN executed = 1 THEN 1 ELSE 0 END) as executed_count,
+                SUM(CASE WHEN risk_check_passed = 0 THEN 1 ELSE 0 END) as rejected_count,
+                AVG(confidence) as avg_confidence
+            FROM trade_decisions
+        """)
+        row = await cursor.fetchone()
+        decision_stats = dict(row) if row else {}
+
+        # Total cost
+        cursor = await db.execute("SELECT SUM(cost_usd) as total_cost, COUNT(*) as api_calls FROM api_usage")
+        row = await cursor.fetchone()
+        cost_stats = dict(row) if row else {}
+
+        # Trades by side
+        cursor = await db.execute("""
+            SELECT side, COUNT(*) as count, SUM(filled_quantity * filled_price) as total_value
+            FROM orders WHERE status = 'filled'
+            GROUP BY side
+        """)
+        rows = await cursor.fetchall()
+        by_side = {r["side"]: {"count": r["count"], "total_value": r["total_value"]} for r in rows}
+
+        # Recent P&L from positions
+        cursor = await db.execute("""
+            SELECT
+                SUM(unrealized_pnl) as total_unrealized_pnl,
+                SUM(realized_pnl) as total_realized_pnl
+            FROM positions
+        """)
+        row = await cursor.fetchone()
+        pnl_stats = dict(row) if row else {}
+
+        return {
+            "total_filled_orders": total_trades,
+            "total_decisions": decision_stats.get("total_decisions", 0),
+            "executed_decisions": decision_stats.get("executed_count", 0),
+            "rejected_decisions": decision_stats.get("rejected_count", 0),
+            "avg_confidence": decision_stats.get("avg_confidence", 0),
+            "total_api_cost_usd": cost_stats.get("total_cost", 0),
+            "total_api_calls": cost_stats.get("api_calls", 0),
+            "trades_by_side": by_side,
+            "total_unrealized_pnl": pnl_stats.get("total_unrealized_pnl", 0),
+            "total_realized_pnl": pnl_stats.get("total_realized_pnl", 0),
+        }
+
+
 # --- Maintenance ---
 
 @router.post("/api/maintenance/prune")

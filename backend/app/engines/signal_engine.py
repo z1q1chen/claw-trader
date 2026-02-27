@@ -120,7 +120,7 @@ class SignalEngine:
         self._running = False
         self._max_history = 200
         self._last_signal_time: dict[str, float] = {}  # "symbol:signal_type" -> timestamp
-        self._signal_cooldown_s: float = 60.0
+        self._signal_cooldown_s: float = settings.signal_cooldown_s
 
     def update_price(self, symbol: str, price: float, volume: float) -> list[Signal]:
         closes = self._price_history.setdefault(symbol, [])

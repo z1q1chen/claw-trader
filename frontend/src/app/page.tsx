@@ -68,11 +68,12 @@ export default function Dashboard() {
     broker: undefined as string | undefined,
   });
   const [tradeStatus, setTradeStatus] = useState<string | null>(null);
+  const [stats, setStats] = useState<Record<string, any>>({});
   const wsRef = useRef<{ close: () => void } | null>(null);
 
   const refreshData = useCallback(async () => {
     try {
-      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok] = await Promise.all([
+      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st] = await Promise.all([
         api.getHealth().catch(() => ({ status: "error" })),
         api.getLLMConfig().catch(() => null),
         api.getUsageSummary().catch(() => []),
@@ -83,6 +84,7 @@ export default function Dashboard() {
         api.getRiskConfig().catch(() => ({})),
         api.getSignals(50).catch(() => []),
         api.listBrokers().catch(() => ({ brokers: [], default: null })),
+        api.getStats().catch(() => ({})),
       ]);
 
       setHealth(h.status === "ok" ? "connected" : "error");
@@ -95,6 +97,7 @@ export default function Dashboard() {
       setRiskConfig(rc);
       setSignals(sig);
       setBrokers(brok);
+      setStats(st);
       setKillSwitch(!!risk.kill_switch_active);
     } catch {
       setHealth("error");
@@ -387,6 +390,45 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Trade Stats */}
+        <div className="card">
+          <h2>Trade Statistics</h2>
+          <div className="stat-row">
+            <div className="stat">
+              <span className="stat-value">{stats.total_filled_orders || 0}</span>
+              <span className="stat-label">Filled Orders</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{stats.total_decisions || 0}</span>
+              <span className="stat-label">Decisions</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">{stats.rejected_decisions || 0}</span>
+              <span className="stat-label">Rejected</span>
+            </div>
+            <div className="stat">
+              <span className="stat-value">
+                ${typeof stats.total_api_cost_usd === "number" ? stats.total_api_cost_usd.toFixed(4) : "0.00"}
+              </span>
+              <span className="stat-label">API Cost</span>
+            </div>
+          </div>
+          <div className="stat-row" style={{ marginTop: 8 }}>
+            <div className="stat">
+              <span className={`stat-value ${(stats.total_unrealized_pnl || 0) >= 0 ? "pnl-positive" : "pnl-negative"}`}>
+                ${typeof stats.total_unrealized_pnl === "number" ? stats.total_unrealized_pnl.toFixed(2) : "0.00"}
+              </span>
+              <span className="stat-label">Unrealized P&L</span>
+            </div>
+            <div className="stat">
+              <span className={`stat-value ${(stats.total_realized_pnl || 0) >= 0 ? "pnl-positive" : "pnl-negative"}`}>
+                ${typeof stats.total_realized_pnl === "number" ? stats.total_realized_pnl.toFixed(2) : "0.00"}
+              </span>
+              <span className="stat-label">Realized P&L</span>
+            </div>
+          </div>
+        </div>
+
         {/* Risk Configuration */}
         <div className="card">
           <h2>Risk Limits</h2>
@@ -575,6 +617,7 @@ export default function Dashboard() {
                     <th>Volume 24h</th>
                     <th>Liquidity</th>
                     <th>End Date</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -584,6 +627,23 @@ export default function Dashboard() {
                       <td>${(m.volume24hr || m.volume || 0).toLocaleString()}</td>
                       <td>${(m.liquidity || 0).toLocaleString()}</td>
                       <td>{m.endDate ? new Date(m.endDate).toLocaleDateString() : "-"}</td>
+                      <td>
+                        <button
+                          className="btn"
+                          style={{ fontSize: 11, padding: "2px 8px" }}
+                          onClick={() => {
+                            setTradeForm({
+                              symbol: m.conditionId || m.id || "",
+                              side: "buy",
+                              quantity: 10,
+                              price: 0.5,
+                              broker: "polymarket",
+                            });
+                          }}
+                        >
+                          Trade
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
