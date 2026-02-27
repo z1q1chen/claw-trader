@@ -29,6 +29,11 @@ class EventBus:
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._handlers.setdefault(event_type, []).append(handler)
 
+    def unsubscribe(self, event_type: str, handler: EventHandler) -> None:
+        handlers = self._handlers.get(event_type, [])
+        if handler in handlers:
+            handlers.remove(handler)
+
     def register_ws_client(self, queue: asyncio.Queue) -> None:
         self._ws_clients.add(queue)
 

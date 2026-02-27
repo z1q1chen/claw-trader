@@ -106,6 +106,16 @@ async def init_db() -> None:
                 metadata TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS risk_config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                max_position_usd REAL NOT NULL DEFAULT 10000,
+                max_daily_loss_usd REAL NOT NULL DEFAULT 5000,
+                max_portfolio_exposure_usd REAL NOT NULL DEFAULT 50000,
+                max_single_trade_usd REAL NOT NULL DEFAULT 2000,
+                max_drawdown_pct REAL NOT NULL DEFAULT 10,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
         """)
         await db.commit()
 
@@ -263,3 +273,31 @@ async def upsert_position(
                  unrealized_pnl, realized_pnl),
             )
         await db.commit()
+
+
+async def save_risk_config(
+    max_position_usd: float,
+    max_daily_loss_usd: float,
+    max_portfolio_exposure_usd: float,
+    max_single_trade_usd: float,
+    max_drawdown_pct: float,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM risk_config")
+        await db.execute(
+            """INSERT INTO risk_config
+               (max_position_usd, max_daily_loss_usd, max_portfolio_exposure_usd,
+                max_single_trade_usd, max_drawdown_pct)
+               VALUES (?, ?, ?, ?, ?)""",
+            (max_position_usd, max_daily_loss_usd, max_portfolio_exposure_usd,
+             max_single_trade_usd, max_drawdown_pct),
+        )
+        await db.commit()
+
+
+async def load_risk_config() -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM risk_config ORDER BY id DESC LIMIT 1")
+        row = await cursor.fetchone()
+        return dict(row) if row else None

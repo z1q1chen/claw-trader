@@ -9,7 +9,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.database import DB_PATH
+from app.core.database import DB_PATH, save_risk_config
 from app.core.events import Event, event_bus
 from app.core.logging import logger
 
@@ -216,6 +216,14 @@ async def update_risk_config(req: RiskConfigRequest):
         settings.max_single_trade_usd = req.max_single_trade_usd
     if req.max_drawdown_pct is not None:
         settings.max_drawdown_pct = req.max_drawdown_pct
+
+    await save_risk_config(
+        settings.max_position_usd,
+        settings.max_daily_loss_usd,
+        settings.max_portfolio_exposure_usd,
+        settings.max_single_trade_usd,
+        settings.max_drawdown_pct,
+    )
     return {"status": "ok"}
 
 
@@ -347,6 +355,28 @@ async def cancel_order(order_id: str):
         if success:
             return {"status": "ok", "message": f"Order {order_id} cancelled via {broker_name}"}
     raise HTTPException(status_code=404, detail=f"Order {order_id} not found in any broker")
+
+
+# --- Markets ---
+
+@router.get("/api/markets/trending")
+async def get_trending_markets(limit: int = 10):
+    from app.main import execution_engine
+    broker = execution_engine._brokers.get("polymarket")
+    if broker is None:
+        raise HTTPException(status_code=400, detail="Polymarket adapter not connected")
+    markets = await broker.get_trending_markets(limit)
+    return markets
+
+
+@router.get("/api/markets/search")
+async def search_markets(q: str, limit: int = 10):
+    from app.main import execution_engine
+    broker = execution_engine._brokers.get("polymarket")
+    if broker is None:
+        raise HTTPException(status_code=400, detail="Polymarket adapter not connected")
+    markets = await broker.search_markets(q, limit)
+    return markets
 
 
 # --- System ---

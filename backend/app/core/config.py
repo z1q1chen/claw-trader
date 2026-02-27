@@ -26,7 +26,11 @@ class Settings(BaseSettings):
 
     # Polymarket
     polymarket_private_key: str = ""
+    polymarket_api_key: str = ""
     polygon_rpc_url: str = ""
+
+    # LLM
+    anthropic_api_key: str = ""
 
     # Risk limits
     max_position_usd: float = 10000.0

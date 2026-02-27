@@ -1,3 +1,16 @@
+import {
+  HealthResponse,
+  LLMConfig,
+  UsageSummary,
+  TradeDecision,
+  Order,
+  Position,
+  RiskSnapshot,
+  RiskConfig,
+  Signal,
+  BrokersResponse,
+} from "./types";
+
 const API_BASE = "/api";
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
@@ -11,82 +24,77 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // LLM Config
-  getLLMConfig: () => fetchJSON<any>("/llm/config"),
-  updateLLMConfig: (config: {
-    provider: string;
-    model_name: string;
-    api_key: string;
-    base_url?: string;
-  }) =>
-    fetchJSON<any>("/llm/config", {
+  getLLMConfig: () => fetchJSON<LLMConfig>("/llm/config"),
+  updateLLMConfig: (config: LLMConfig) =>
+    fetchJSON<LLMConfig>("/llm/config", {
       method: "POST",
       body: JSON.stringify(config),
     }),
 
   // API Usage
-  getUsage: (limit = 100) => fetchJSON<any[]>(`/usage?limit=${limit}`),
-  getUsageSummary: () => fetchJSON<any[]>("/usage/summary"),
+  getUsage: (limit = 100) => fetchJSON<UsageSummary[]>(`/usage?limit=${limit}`),
+  getUsageSummary: () => fetchJSON<UsageSummary[]>("/usage/summary"),
 
   // Trade Decisions
   getDecisions: (limit = 50) =>
-    fetchJSON<any[]>(`/decisions?limit=${limit}`),
+    fetchJSON<TradeDecision[]>(`/decisions?limit=${limit}`),
 
   // Orders
-  getOrders: (limit = 50) => fetchJSON<any[]>(`/orders?limit=${limit}`),
+  getOrders: (limit = 50) => fetchJSON<Order[]>(`/orders?limit=${limit}`),
 
   // Positions
-  getPositions: () => fetchJSON<any[]>("/positions"),
+  getPositions: () => fetchJSON<Position[]>("/positions"),
 
   // Balance
-  getBalance: (broker: string) => fetchJSON<any>(`/balance/${broker}`),
+  getBalance: (broker: string) => fetchJSON<{ balance: number }>(`/balance/${broker}`),
 
   // Risk
-  getRiskSnapshot: () => fetchJSON<any>("/risk"),
-  getRiskConfig: () => fetchJSON<any>("/risk/config"),
-  updateRiskConfig: (config: any) =>
-    fetchJSON<any>("/risk/config", {
+  getRiskSnapshot: () => fetchJSON<RiskSnapshot>("/risk"),
+  getRiskConfig: () => fetchJSON<RiskConfig>("/risk/config"),
+  updateRiskConfig: (config: RiskConfig) =>
+    fetchJSON<RiskConfig>("/risk/config", {
       method: "POST",
       body: JSON.stringify(config),
     }),
   toggleKillSwitch: (active: boolean) =>
-    fetchJSON<any>("/risk/killswitch", {
+    fetchJSON<{ kill_switch_active: boolean }>("/risk/killswitch", {
       method: "POST",
       body: JSON.stringify({ active }),
     }),
 
   // Signals
   getSignals: (limit = 100) =>
-    fetchJSON<any[]>(`/signals?limit=${limit}`),
+    fetchJSON<Signal[]>(`/signals?limit=${limit}`),
 
   // Health
-  getHealth: () => fetchJSON<any>("/health"),
+  getHealth: () => fetchJSON<HealthResponse>("/health"),
 
   // Brokers
-  listBrokers: () => fetchJSON<any>("/brokers"),
+  listBrokers: () => fetchJSON<BrokersResponse>("/brokers"),
   connectBroker: (broker: string) =>
-    fetchJSON<any>("/broker/connect", {
+    fetchJSON<BrokersResponse>("/broker/connect", {
       method: "POST",
       body: JSON.stringify({ broker }),
     }),
   disconnectBroker: (broker: string) =>
-    fetchJSON<any>("/broker/disconnect", {
+    fetchJSON<BrokersResponse>("/broker/disconnect", {
       method: "POST",
       body: JSON.stringify({ broker }),
     }),
 
   // Manual Trading
   placeTrade: (trade: { symbol: string; side: string; quantity: number; broker?: string }) =>
-    fetchJSON<any>("/trade", {
+    fetchJSON<TradeDecision>("/trade", {
       method: "POST",
       body: JSON.stringify(trade),
     }),
 
   // Order Management
   cancelOrder: (orderId: string) =>
-    fetchJSON<any>(`/orders/${orderId}/cancel`, { method: "POST" }),
+    fetchJSON<Order>(`/orders/${orderId}/cancel`, { method: "POST" }),
 
   // Live Risk
-  getLiveRisk: () => fetchJSON<any>("/risk/live"),
+  getLiveRisk: () => fetchJSON<RiskSnapshot>("/risk/live"),
 };
 
 export function createWebSocket(

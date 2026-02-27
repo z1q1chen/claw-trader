@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position
+from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
 from app.core.middleware import RateLimitMiddleware
@@ -110,6 +110,16 @@ async def periodic_portfolio_sync() -> None:
 async def lifespan(app: FastAPI):
     setup_logging()
     await init_db()
+
+    # Load persisted risk configuration
+    saved_risk = await load_risk_config()
+    if saved_risk:
+        settings.max_position_usd = saved_risk["max_position_usd"]
+        settings.max_daily_loss_usd = saved_risk["max_daily_loss_usd"]
+        settings.max_portfolio_exposure_usd = saved_risk["max_portfolio_exposure_usd"]
+        settings.max_single_trade_usd = saved_risk["max_single_trade_usd"]
+        settings.max_drawdown_pct = saved_risk["max_drawdown_pct"]
+        logger.info("Loaded persisted risk configuration")
 
     # Configure LLM brain with defaults
     if settings.gemini_api_key:

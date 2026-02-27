@@ -2,6 +2,17 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api, createWebSocket } from "@/lib/api";
+import type {
+  LLMConfig,
+  UsageSummary,
+  TradeDecision,
+  Order,
+  Position,
+  RiskSnapshot,
+  RiskConfig,
+  Signal,
+  BrokersResponse,
+} from "@/lib/types";
 
 interface EventLogEntry {
   time: string;
@@ -11,22 +22,35 @@ interface EventLogEntry {
 
 export default function Dashboard() {
   const [health, setHealth] = useState<string>("connecting...");
-  const [llmConfig, setLlmConfig] = useState({
+  const [llmConfig, setLlmConfig] = useState<LLMConfig>({
     provider: "gemini",
     model_name: "gemini-2.0-flash",
     api_key: "",
     base_url: "",
   });
-  const [usageSummary, setUsageSummary] = useState<any[]>([]);
-  const [decisions, setDecisions] = useState<any[]>([]);
-  const [orders, setOrders] = useState<any[]>([]);
-  const [positions, setPositions] = useState<any[]>([]);
-  const [riskSnapshot, setRiskSnapshot] = useState<any>({});
-  const [riskConfig, setRiskConfig] = useState<any>({});
-  const [signals, setSignals] = useState<any[]>([]);
+  const [usageSummary, setUsageSummary] = useState<UsageSummary[]>([]);
+  const [decisions, setDecisions] = useState<TradeDecision[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [riskSnapshot, setRiskSnapshot] = useState<RiskSnapshot>({
+    total_exposure_usd: 0,
+    daily_pnl_usd: 0,
+    max_drawdown_pct: 0,
+    var_95_usd: 0,
+    positions_count: 0,
+    kill_switch_active: false,
+  });
+  const [riskConfig, setRiskConfig] = useState<RiskConfig>({
+    max_position_usd: 0,
+    max_daily_loss_usd: 0,
+    max_portfolio_exposure_usd: 0,
+    max_single_trade_usd: 0,
+    max_drawdown_pct: 0,
+  });
+  const [signals, setSignals] = useState<Signal[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [killSwitch, setKillSwitch] = useState(false);
-  const [brokers, setBrokers] = useState<{ brokers: string[]; default: string | null }>({ brokers: [], default: null });
+  const [brokers, setBrokers] = useState<BrokersResponse>({ brokers: [], default: null });
   const [connectingBroker, setConnectingBroker] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
 
@@ -159,6 +183,7 @@ export default function Dashboard() {
             >
               <option value="gemini">Google Gemini</option>
               <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic Claude</option>
               <option value="local">Local (OpenAI-compatible)</option>
             </select>
           </div>
@@ -323,6 +348,35 @@ export default function Dashboard() {
           <button className="btn" onClick={saveRiskConfig}>
             Update Risk Limits
           </button>
+        </div>
+
+        {/* Signals */}
+        <div className="card dashboard-full">
+          <h2>Recent Signals</h2>
+          {signals.length === 0 ? (
+            <p style={{ color: "var(--text-muted)" }}>No signals yet</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Signal Type</th>
+                  <th>Value</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {signals.map((s, i) => (
+                  <tr key={i}>
+                    <td>{s.symbol}</td>
+                    <td>{s.signal_type}</td>
+                    <td>{s.value}</td>
+                    <td>{s.created_at}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Broker Connections */}
