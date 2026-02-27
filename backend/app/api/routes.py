@@ -41,6 +41,7 @@ class ManualTradeRequest(BaseModel):
     symbol: str
     side: str  # "buy" or "sell"
     quantity: float
+    price: float = 0.0  # estimated current price
     broker: str | None = None
 
 
@@ -324,8 +325,8 @@ async def manual_trade(req: ManualTradeRequest):
         strategy="manual",
     )
 
-    # Use a rough price estimate - in production this would come from market data
-    result = await execution_engine.execute_trade(action, current_price=0.0, broker_name=req.broker)
+    # Use the price from request; in production this would come from market data
+    result = await execution_engine.execute_trade(action, current_price=req.price, broker_name=req.broker)
     if result is None:
         raise HTTPException(status_code=400, detail="Trade rejected by risk engine or no broker available")
     if not result.success:

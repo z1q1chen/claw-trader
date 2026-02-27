@@ -125,6 +125,41 @@ class OpenAICompatibleProvider(LLMProvider):
         )
 
 
+class AnthropicProvider(LLMProvider):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514") -> None:
+        self.api_key = api_key
+        self.model = model
+        self._client = None
+
+    async def _get_client(self):
+        if self._client is None:
+            from anthropic import AsyncAnthropic
+            self._client = AsyncAnthropic(api_key=self.api_key)
+        return self._client
+
+    async def complete(self, system_prompt: str, user_prompt: str) -> LLMResponse:
+        client = await self._get_client()
+        start = time.monotonic()
+
+        response = await client.messages.create(
+            model=self.model,
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        latency = (time.monotonic() - start) * 1000
+        content = response.content[0].text if response.content else ""
+        return LLMResponse(
+            content=content,
+            prompt_tokens=response.usage.input_tokens,
+            completion_tokens=response.usage.output_tokens,
+            model=self.model,
+            provider="anthropic",
+            latency_ms=latency,
+        )
+
+
 TRADE_DECISION_SYSTEM_PROMPT = """You are an autonomous quantitative trading agent.
 You receive market signals and must decide whether to trade.
 
@@ -171,6 +206,8 @@ class LLMBrain:
                 api_key=api_key, model=model, base_url=base_url,
                 provider_name=provider,
             )
+        elif provider == "anthropic":
+            self._provider = AnthropicProvider(api_key=api_key, model=model)
         else:
             raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -237,6 +274,7 @@ class LLMBrain:
         rates = {
             "gemini": {"prompt": 0.075 / 1_000_000, "completion": 0.30 / 1_000_000},
             "openai": {"prompt": 2.50 / 1_000_000, "completion": 10.00 / 1_000_000},
+            "anthropic": {"prompt": 3.00 / 1_000_000, "completion": 15.00 / 1_000_000},
             "local": {"prompt": 0.0, "completion": 0.0},
         }
         rate = rates.get(response.provider, rates["openai"])
