@@ -37,6 +37,17 @@ class KillSwitchRequest(BaseModel):
     active: bool
 
 
+class ManualTradeRequest(BaseModel):
+    symbol: str
+    side: str  # "buy" or "sell"
+    quantity: float
+    broker: str | None = None
+
+
+class BrokerConnectRequest(BaseModel):
+    broker: str  # "ibkr" or "polymarket"
+
+
 # --- LLM Config ---
 
 @router.get("/api/llm/config")
@@ -250,8 +261,105 @@ async def websocket_endpoint(ws: WebSocket):
         event_bus.unregister_ws_client(queue)
 
 
+# --- Broker Management ---
+
+@router.post("/api/broker/connect")
+async def connect_broker(req: BrokerConnectRequest):
+    from app.main import execution_engine
+    from app.core.logging import logger
+    if req.broker == "ibkr":
+        from app.brokers.ibkr import IBKRAdapter
+        adapter = IBKRAdapter()
+        try:
+            await adapter.connect()
+            execution_engine.register_broker("ibkr", adapter, default=True)
+            return {"status": "ok", "broker": "ibkr", "message": "IBKR connected"}
+        except Exception as e:
+            logger.error(f"IBKR connection failed: {e}")
+            raise HTTPException(status_code=500, detail=f"IBKR connection failed: {e}")
+    elif req.broker == "polymarket":
+        from app.brokers.polymarket import PolymarketAdapter
+        adapter = PolymarketAdapter()
+        execution_engine.register_broker("polymarket", adapter)
+        return {"status": "ok", "broker": "polymarket", "message": "Polymarket adapter registered"}
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown broker: {req.broker}")
+
+
+@router.post("/api/broker/disconnect")
+async def disconnect_broker(req: BrokerConnectRequest):
+    from app.main import execution_engine
+    if req.broker in execution_engine._brokers:
+        broker = execution_engine._brokers[req.broker]
+        if hasattr(broker, 'disconnect'):
+            await broker.disconnect()
+        del execution_engine._brokers[req.broker]
+        if execution_engine._default_broker == req.broker:
+            execution_engine._default_broker = next(iter(execution_engine._brokers), None)
+        return {"status": "ok", "message": f"{req.broker} disconnected"}
+    raise HTTPException(status_code=404, detail=f"Broker {req.broker} not registered")
+
+
+@router.get("/api/brokers")
+async def list_brokers():
+    from app.main import execution_engine
+    return {
+        "brokers": list(execution_engine._brokers.keys()),
+        "default": execution_engine._default_broker,
+    }
+
+
+@router.post("/api/trade")
+async def manual_trade(req: ManualTradeRequest):
+    from app.main import execution_engine
+    from app.engines.llm_brain import TradeAction
+    from app.core.logging import logger
+
+    action = TradeAction(
+        symbol=req.symbol,
+        side=req.side,
+        quantity=req.quantity,
+        reasoning="Manual trade via dashboard",
+        confidence=1.0,
+        strategy="manual",
+    )
+
+    # Use a rough price estimate - in production this would come from market data
+    result = await execution_engine.execute_trade(action, current_price=0.0, broker_name=req.broker)
+    if result is None:
+        raise HTTPException(status_code=400, detail="Trade rejected by risk engine or no broker available")
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Trade failed")
+    return {
+        "status": "ok",
+        "broker_order_id": result.broker_order_id,
+        "filled_price": result.filled_price,
+        "filled_quantity": result.filled_quantity,
+    }
+
+
+@router.post("/api/orders/{order_id}/cancel")
+async def cancel_order(order_id: str):
+    from app.main import execution_engine
+    for broker_name, broker in execution_engine._brokers.items():
+        success = await broker.cancel_order(order_id)
+        if success:
+            return {"status": "ok", "message": f"Order {order_id} cancelled via {broker_name}"}
+    raise HTTPException(status_code=404, detail=f"Order {order_id} not found in any broker")
+
+
 # --- System ---
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "app": settings.app_name}
+    from app.main import signal_engine, llm_brain, risk_engine, execution_engine
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "engines": {
+            "signal_engine": signal_engine._running,
+            "llm_configured": llm_brain._provider is not None,
+            "kill_switch": risk_engine.kill_switch_active,
+            "brokers_registered": list(execution_engine._brokers.keys()),
+        },
+    }

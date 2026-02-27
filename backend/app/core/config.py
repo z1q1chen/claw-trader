@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     app_name: str = "Claw Trader"
     debug: bool = False
 
+    # CORS
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"])
+
     # Database
     database_url: str = "sqlite+aiosqlite:///claw_trader.db"
 
