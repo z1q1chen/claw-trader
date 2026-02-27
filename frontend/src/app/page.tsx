@@ -26,11 +26,13 @@ export default function Dashboard() {
   const [signals, setSignals] = useState<any[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [killSwitch, setKillSwitch] = useState(false);
+  const [brokers, setBrokers] = useState<{ brokers: string[]; default: string | null }>({ brokers: [], default: null });
+  const [connectingBroker, setConnectingBroker] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
 
   const refreshData = useCallback(async () => {
     try {
-      const [h, cfg, usage, dec, ord, pos, risk, rc, sig] = await Promise.all([
+      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok] = await Promise.all([
         api.getHealth().catch(() => ({ status: "error" })),
         api.getLLMConfig().catch(() => null),
         api.getUsageSummary().catch(() => []),
@@ -40,6 +42,7 @@ export default function Dashboard() {
         api.getRiskSnapshot().catch(() => ({})),
         api.getRiskConfig().catch(() => ({})),
         api.getSignals(50).catch(() => []),
+        api.listBrokers().catch(() => ({ brokers: [], default: null })),
       ]);
 
       setHealth(h.status === "ok" ? "connected" : "error");
@@ -51,6 +54,7 @@ export default function Dashboard() {
       setRiskSnapshot(risk);
       setRiskConfig(rc);
       setSignals(sig);
+      setBrokers(brok);
       setKillSwitch(!!risk.kill_switch_active);
     } catch {
       setHealth("error");
@@ -100,6 +104,23 @@ export default function Dashboard() {
 
   const saveRiskConfig = async () => {
     await api.updateRiskConfig(riskConfig);
+    refreshData();
+  };
+
+  const connectBroker = async (broker: string) => {
+    setConnectingBroker(true);
+    try {
+      await api.connectBroker(broker);
+      refreshData();
+    } catch (e: any) {
+      alert(`Failed to connect ${broker}: ${e.message}`);
+    } finally {
+      setConnectingBroker(false);
+    }
+  };
+
+  const disconnectBroker = async (broker: string) => {
+    await api.disconnectBroker(broker);
     refreshData();
   };
 
@@ -304,20 +325,47 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Balance */}
+        {/* Broker Connections */}
         <div className="card">
-          <h2>Account Balance</h2>
-          <div className="stat-row">
-            <div className="stat">
-              <span className="stat-value">
-                {positions.length}
-              </span>
-              <span className="stat-label">Open Positions</span>
-            </div>
+          <h2>Brokers</h2>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button
+              className="btn"
+              onClick={() => connectBroker("ibkr")}
+              disabled={connectingBroker || brokers.brokers.includes("ibkr")}
+            >
+              {brokers.brokers.includes("ibkr") ? "IBKR Connected" : "Connect IBKR"}
+            </button>
+            <button
+              className="btn"
+              onClick={() => connectBroker("polymarket")}
+              disabled={connectingBroker || brokers.brokers.includes("polymarket")}
+            >
+              {brokers.brokers.includes("polymarket") ? "Polymarket Connected" : "Connect Polymarket"}
+            </button>
           </div>
-          <p style={{ color: "var(--text-muted)", marginTop: 8, fontSize: 12 }}>
-            Connect IBKR TWS/Gateway to see live balance
-          </p>
+          {brokers.brokers.length > 0 && (
+            <div>
+              <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                Connected: {brokers.brokers.join(", ")} (default: {brokers.default})
+              </p>
+              {brokers.brokers.map((b) => (
+                <button
+                  key={b}
+                  className="btn"
+                  style={{ marginRight: 8, marginTop: 4, fontSize: 11 }}
+                  onClick={() => disconnectBroker(b)}
+                >
+                  Disconnect {b}
+                </button>
+              ))}
+            </div>
+          )}
+          {brokers.brokers.length === 0 && (
+            <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
+              No brokers connected. Connect IBKR TWS/Gateway to trade.
+            </p>
+          )}
         </div>
 
         {/* Positions */}

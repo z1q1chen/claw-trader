@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     signal_scan_interval_ms: int = 500
     price_feed_symbols: list[str] = Field(default_factory=lambda: ["AAPL", "MSFT", "GOOGL", "AMZN", "SPY"])
 
+    # Rate limiting
+    rate_limit_rpm: int = 120  # requests per minute per IP
+
     model_config = {"env_file": ".env", "env_prefix": "CT_"}
 
 

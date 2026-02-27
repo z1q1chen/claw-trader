@@ -60,6 +60,33 @@ export const api = {
 
   // Health
   getHealth: () => fetchJSON<any>("/health"),
+
+  // Brokers
+  listBrokers: () => fetchJSON<any>("/brokers"),
+  connectBroker: (broker: string) =>
+    fetchJSON<any>("/broker/connect", {
+      method: "POST",
+      body: JSON.stringify({ broker }),
+    }),
+  disconnectBroker: (broker: string) =>
+    fetchJSON<any>("/broker/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ broker }),
+    }),
+
+  // Manual Trading
+  placeTrade: (trade: { symbol: string; side: string; quantity: number; broker?: string }) =>
+    fetchJSON<any>("/trade", {
+      method: "POST",
+      body: JSON.stringify(trade),
+    }),
+
+  // Order Management
+  cancelOrder: (orderId: string) =>
+    fetchJSON<any>(`/orders/${orderId}/cancel`, { method: "POST" }),
+
+  // Live Risk
+  getLiveRisk: () => fetchJSON<any>("/risk/live"),
 };
 
 export function createWebSocket(

@@ -11,37 +11,19 @@ from app.core.config import settings
 from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
+from app.core.middleware import RateLimitMiddleware
 from app.engines.signal_engine import SignalEngine
 from app.engines.llm_brain import LLMBrain
 from app.engines.risk_engine import RiskEngine
 from app.engines.execution_engine import ExecutionEngine
 from app.api.routes import router
+from app.feeds.dummy import DummyPriceFeed
 
 # Global engine instances
 signal_engine = SignalEngine()
 llm_brain = LLMBrain()
 risk_engine = RiskEngine()
 execution_engine = ExecutionEngine(risk_engine)
-
-
-class DummyPriceFeed:
-    """Placeholder price feed that returns synthetic data for testing."""
-
-    def __init__(self, symbols: list[str]) -> None:
-        self._symbols = symbols
-        self._prices: dict[str, float] = {s: 100.0 for s in symbols}
-        self._tick = 0
-
-    async def get_latest_prices(self) -> dict[str, tuple[float, float]]:
-        import random
-        self._tick += 1
-        result = {}
-        for symbol in self._symbols:
-            change = random.gauss(0, 0.5)
-            self._prices[symbol] = max(1.0, self._prices[symbol] + change)
-            volume = random.uniform(10000, 100000)
-            result[symbol] = (self._prices[symbol], volume)
-        return result
 
 
 async def handle_signal(event: Event) -> None:
@@ -146,6 +128,7 @@ async def lifespan(app: FastAPI):
 
     # Start signal engine with dummy feed (replace with IBKR feed in production)
     feed = DummyPriceFeed(settings.price_feed_symbols)
+    await feed.start()
     signal_task = asyncio.create_task(signal_engine.run(feed))
 
     logger.info(f"Claw Trader started. Monitoring: {settings.price_feed_symbols}")
@@ -153,6 +136,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await feed.stop()
     signal_engine.stop()
     signal_task.cancel()
     try:
@@ -175,6 +159,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_rpm)
 
 app.include_router(router)
 
