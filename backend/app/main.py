@@ -131,6 +131,15 @@ async def lifespan(app: FastAPI):
     setup_logging()
     await init_db()
 
+    # Validate minimum configuration
+    has_llm = bool(settings.gemini_api_key or settings.openai_api_key or settings.anthropic_api_key)
+    if not has_llm:
+        logger.warning("No LLM API key configured. Set CT_GEMINI_API_KEY, CT_OPENAI_API_KEY, or CT_ANTHROPIC_API_KEY in .env")
+
+    has_broker = bool(settings.polymarket_api_key)
+    if not has_broker:
+        logger.warning("No broker API key configured. Trading will not be possible until a broker is connected.")
+
     # Load persisted risk configuration
     saved_risk = await load_risk_config()
     if saved_risk:
@@ -156,7 +165,7 @@ async def lifespan(app: FastAPI):
     elif settings.openai_api_key:
         llm_brain.configure("openai", "gpt-4o", settings.openai_api_key)
     elif settings.anthropic_api_key:
-        llm_brain.configure("anthropic", "claude-sonnet-4-20250514", settings.anthropic_api_key)
+        llm_brain.configure("anthropic", "claude-3-5-sonnet-20241022", settings.anthropic_api_key)
 
     # Wire up event handlers
     event_bus.subscribe("signal", handle_signal)

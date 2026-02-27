@@ -323,12 +323,12 @@ async def load_risk_config() -> dict | None:
 
 async def prune_old_records(days: int = 30) -> dict[str, int]:
     """Delete records older than the specified number of days."""
-    cutoff = f"datetime('now', '-{days} days')"
     counts = {}
     async with aiosqlite.connect(DB_PATH) as db:
         for table in ("signals", "risk_snapshots", "api_usage"):
             cursor = await db.execute(
-                f"DELETE FROM {table} WHERE created_at < {cutoff}"
+                f"DELETE FROM {table} WHERE created_at < datetime('now', ?)",
+                (f'-{days} days',)
             )
             counts[table] = cursor.rowcount
         await db.commit()

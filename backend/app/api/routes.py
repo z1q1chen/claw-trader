@@ -179,11 +179,25 @@ async def get_all_positions():
     """Get positions from all connected brokers."""
     from app.main import execution_engine
     try:
-        all_positions = await execution_engine.get_all_positions()
-        return all_positions
+        all_raw = await execution_engine.get_all_positions()
+        result = []
+        for broker_name, positions in all_raw.items():
+            for symbol, pos_data in positions.items():
+                qty = pos_data.get("quantity", 0)
+                avg_cost = pos_data.get("avg_cost", 0)
+                result.append({
+                    "broker": broker_name,
+                    "symbol": symbol,
+                    "quantity": qty,
+                    "avg_entry_price": avg_cost,
+                    "current_price": pos_data.get("market_value", 0) / max(qty, 0.01) if qty > 0 else avg_cost,
+                    "unrealized_pnl": pos_data.get("unrealized_pnl", 0),
+                    "realized_pnl": pos_data.get("realized_pnl", 0),
+                })
+        return result
     except Exception as e:
-        logger.error(f"All positions fetch error: {e}")
-        return {}
+        logger.error(f"Failed to get all positions: {e}")
+        return []
 
 
 # --- Balance ---

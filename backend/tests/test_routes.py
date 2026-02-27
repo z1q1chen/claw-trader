@@ -170,6 +170,31 @@ class TestPositionEndpoints:
             response = client.get("/api/positions/all")
             assert response.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_get_all_positions_flattened(self, client):
+        """Test /api/positions/all returns flattened position list."""
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec.get_all_positions = AsyncMock(return_value={
+                "polymarket": {
+                    "COND_123": {
+                        "quantity": 10.0,
+                        "avg_cost": 0.55,
+                        "market_value": 6.0,
+                        "unrealized_pnl": 0.5,
+                        "realized_pnl": 0.0,
+                    }
+                }
+            })
+            response = client.get("/api/positions/all")
+            assert response.status_code == 200
+            data = response.json()
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert data[0]["broker"] == "polymarket"
+            assert data[0]["symbol"] == "COND_123"
+            assert data[0]["quantity"] == 10.0
+            assert data[0]["avg_entry_price"] == 0.55
+
 
 class TestTradeStatsEndpoint:
     def test_get_trade_stats(self, client):

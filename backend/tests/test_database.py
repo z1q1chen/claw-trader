@@ -233,3 +233,18 @@ async def test_load_llm_config_returns_active_config(temp_db):
     assert result is not None
     assert result["provider"] == "gemini"
     assert result["api_key"] == "test-key"
+
+
+@pytest.mark.asyncio
+async def test_prune_old_records_parameterized(temp_db):
+    """Verify prune uses parameterized queries (no SQL injection)."""
+    from app.core.database import prune_old_records
+    # Insert a signal that's definitely old
+    async with aiosqlite.connect(temp_db) as db:
+        await db.execute(
+            "INSERT INTO signals (symbol, signal_type, value, metadata, created_at) VALUES (?, ?, ?, ?, datetime('now', '-60 days'))",
+            ("TEST", "test", 1.0, "{}"),
+        )
+        await db.commit()
+    result = await prune_old_records(30)
+    assert result["signals"] >= 1

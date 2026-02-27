@@ -128,7 +128,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514") -> None:
+    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022") -> None:
         self.api_key = api_key
         self.model = model
         self._client = None

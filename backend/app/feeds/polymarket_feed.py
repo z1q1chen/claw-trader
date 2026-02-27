@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.feeds.base import PriceFeed
+from app.core.logging import logger
 
 
 class PolymarketPriceFeed(PriceFeed):
@@ -25,18 +26,25 @@ class PolymarketPriceFeed(PriceFeed):
                 resp = await self._http.get(
                     f"https://gamma-api.polymarket.com/markets/{cid}"
                 )
-                if resp.status_code == 200:
-                    market = resp.json()
-                    prices = market.get("outcomePrices", "")
-                    if isinstance(prices, str) and prices:
-                        import json
+                if resp.status_code != 200:
+                    logger.warning(f"Polymarket API returned status {resp.status_code} for condition {cid}")
+                    continue
+                market = resp.json()
+                prices = market.get("outcomePrices", "")
+                if isinstance(prices, str) and prices:
+                    import json
+                    try:
                         price_list = json.loads(prices)
                         yes_price = float(price_list[0]) if len(price_list) > 0 else 0.5
-                    else:
-                        yes_price = 0.5
-                    volume = float(market.get("volume24hr", 0))
-                    result[cid] = (yes_price, volume)
-            except Exception:
+                    except (json.JSONDecodeError, ValueError, IndexError) as e:
+                        logger.warning(f"Failed to parse outcomePrices for {cid}: {e}")
+                        continue
+                else:
+                    yes_price = 0.5
+                volume = float(market.get("volume24hr", 0))
+                result[cid] = (yes_price, volume)
+            except Exception as e:
+                logger.warning(f"Error fetching price data for condition {cid}: {e}")
                 continue
         return result
 

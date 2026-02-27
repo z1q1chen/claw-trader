@@ -58,6 +58,7 @@ class ExecutionEngine:
         self._risk_engine = risk_engine
         self._brokers: dict[str, BrokerAdapter] = {}
         self._default_broker: str | None = None
+        self._portfolio_lock = asyncio.Lock()
 
     def register_broker(self, name: str, adapter: BrokerAdapter, default: bool = False) -> None:
         self._brokers[name] = adapter
@@ -73,62 +74,48 @@ class ExecutionEngine:
             logger.warning(f"Execution engine: No broker '{broker_name}' registered")
             return None
 
-        risk_result = self._risk_engine.check_trade(action, current_price)
+        async with self._portfolio_lock:
+            risk_result = self._risk_engine.check_trade(action, current_price)
 
-        quantity = action.quantity
-        if risk_result.adjusted_quantity is not None:
-            quantity = risk_result.adjusted_quantity
+            quantity = action.quantity
+            if risk_result.adjusted_quantity is not None:
+                quantity = risk_result.adjusted_quantity
 
-        decision_id = await log_trade_decision(
-            strategy=action.strategy,
-            symbol=action.symbol,
-            side=action.side,
-            quantity=quantity,
-            price=current_price,
-            reasoning=action.reasoning,
-            confidence=action.confidence,
-            signals_snapshot={},
-            risk_check_passed=risk_result.passed,
-            risk_rejection_reason=risk_result.rejection_reason,
-        )
+            decision_id = await log_trade_decision(
+                strategy=action.strategy,
+                symbol=action.symbol,
+                side=action.side,
+                quantity=quantity,
+                price=current_price,
+                reasoning=action.reasoning,
+                confidence=action.confidence,
+                signals_snapshot={},
+                risk_check_passed=risk_result.passed,
+                risk_rejection_reason=risk_result.rejection_reason,
+            )
 
-        if not risk_result.passed:
-            await event_bus.publish(Event(
-                type="trade_rejected",
-                data={
-                    "decision_id": decision_id,
-                    "symbol": action.symbol,
-                    "reason": risk_result.rejection_reason,
-                }
-            ))
-            return None
+            if not risk_result.passed:
+                await event_bus.publish(Event(
+                    type="trade_rejected",
+                    data={
+                        "decision_id": decision_id,
+                        "symbol": action.symbol,
+                        "reason": risk_result.rejection_reason,
+                    }
+                ))
+                return None
 
-        broker = self._brokers[broker_name]
-        order_id = await log_order(
-            broker=broker_name,
-            symbol=action.symbol,
-            side=action.side,
-            order_type=action.order_type,
-            quantity=quantity,
-            decision_id=decision_id,
-            limit_price=action.limit_price,
-        )
+            broker = self._brokers[broker_name]
+            order_id = await log_order(
+                broker=broker_name,
+                symbol=action.symbol,
+                side=action.side,
+                order_type=action.order_type,
+                quantity=quantity,
+                decision_id=decision_id,
+                limit_price=action.limit_price,
+            )
 
-        result = await broker.place_order(
-            symbol=action.symbol,
-            side=action.side,
-            quantity=quantity,
-            order_type=action.order_type,
-            limit_price=action.limit_price,
-        )
-
-        # Retry once on transient failures
-        if not result.success and result.error and any(
-            term in result.error.lower()
-            for term in ("timeout", "connection", "temporarily", "503", "502")
-        ):
-            logger.warning(f"Transient order failure, retrying: {result.error}")
-            await asyncio.sleep(1)
             result = await broker.place_order(
                 symbol=action.symbol,
                 side=action.side,
@@ -137,32 +124,47 @@ class ExecutionEngine:
                 limit_price=action.limit_price,
             )
 
-        if result.success:
-            await update_order_status(
-                order_id, "filled",
-                broker_order_id=result.broker_order_id,
-                filled_price=result.filled_price,
-                filled_quantity=result.filled_quantity,
-            )
-            await mark_decision_executed(decision_id, result.broker_order_id)
-        else:
-            await update_order_status(order_id, "failed", broker_order_id=result.broker_order_id)
+            # Retry once on transient failures
+            if not result.success and result.error and any(
+                term in result.error.lower()
+                for term in ("timeout", "connection", "temporarily", "503", "502")
+            ):
+                logger.warning(f"Transient order failure, retrying: {result.error}")
+                await asyncio.sleep(1)
+                result = await broker.place_order(
+                    symbol=action.symbol,
+                    side=action.side,
+                    quantity=quantity,
+                    order_type=action.order_type,
+                    limit_price=action.limit_price,
+                )
 
-        await event_bus.publish(Event(
-            type="order_executed" if result.success else "order_failed",
-            data={
-                "decision_id": decision_id,
-                "order_id": order_id,
-                "broker_order_id": result.broker_order_id,
-                "symbol": action.symbol,
-                "side": action.side,
-                "quantity": quantity,
-                "filled_price": result.filled_price,
-                "error": result.error,
-            }
-        ))
+            if result.success:
+                await update_order_status(
+                    order_id, "filled",
+                    broker_order_id=result.broker_order_id,
+                    filled_price=result.filled_price,
+                    filled_quantity=result.filled_quantity,
+                )
+                await mark_decision_executed(decision_id, result.broker_order_id)
+            else:
+                await update_order_status(order_id, "failed", broker_order_id=result.broker_order_id)
 
-        return result
+            await event_bus.publish(Event(
+                type="order_executed" if result.success else "order_failed",
+                data={
+                    "decision_id": decision_id,
+                    "order_id": order_id,
+                    "broker_order_id": result.broker_order_id,
+                    "symbol": action.symbol,
+                    "side": action.side,
+                    "quantity": quantity,
+                    "filled_price": result.filled_price,
+                    "error": result.error,
+                }
+            ))
+
+            return result
 
     async def get_positions(self, broker_name: str | None = None) -> dict[str, dict[str, Any]]:
         broker_name = broker_name or self._default_broker
@@ -178,12 +180,13 @@ class ExecutionEngine:
 
     async def get_all_positions(self) -> dict[str, dict[str, dict[str, Any]]]:
         """Get positions from all registered brokers."""
-        all_positions = {}
-        for broker_name, broker in self._brokers.items():
-            try:
-                positions = await broker.get_positions()
-                all_positions[broker_name] = positions
-            except Exception as e:
-                logger.warning(f"Failed to get positions from {broker_name}: {e}")
-                all_positions[broker_name] = {}
-        return all_positions
+        async with self._portfolio_lock:
+            all_positions = {}
+            for broker_name, broker in self._brokers.items():
+                try:
+                    positions = await broker.get_positions()
+                    all_positions[broker_name] = positions
+                except Exception as e:
+                    logger.warning(f"Failed to get positions from {broker_name}: {e}")
+                    all_positions[broker_name] = {}
+            return all_positions
