@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -43,10 +44,11 @@ class TechnicalIndicators:
         losses = np.where(deltas < 0, -deltas, 0.0)
         avg_gain = np.mean(gains[-period:])
         avg_loss = np.mean(losses[-period:])
-        if avg_loss == 0:
-            return 100.0
+        if avg_loss == 0 or avg_gain == 0:
+            return 100.0 if avg_gain > 0 else (0.0 if avg_loss > 0 else 50.0)
         rs = avg_gain / avg_loss
-        return 100.0 - (100.0 / (1.0 + rs))
+        result = 100.0 - (100.0 / (1.0 + rs))
+        return result if math.isfinite(result) else 50.0
 
     @staticmethod
     def sma(closes: np.ndarray, period: int) -> float:
@@ -165,24 +167,28 @@ class SignalEngine:
 
         macd_line, signal_line, histogram = ti.macd(closes)
         if len(closes) > 26:
-            if macd_line > signal_line and histogram > 0:
-                if self._should_emit(symbol, "macd_bullish"):
-                    signals.append(Signal(symbol, "macd_bullish", macd_line, {
-                        "signal_line": signal_line, "histogram": histogram
-                    }))
-            elif macd_line < signal_line and histogram < 0:
-                if self._should_emit(symbol, "macd_bearish"):
-                    signals.append(Signal(symbol, "macd_bearish", macd_line, {
-                        "signal_line": signal_line, "histogram": histogram
-                    }))
+            if math.isfinite(macd_line) and math.isfinite(signal_line) and math.isfinite(histogram):
+                if macd_line > signal_line and histogram > 0:
+                    if self._should_emit(symbol, "macd_bullish"):
+                        signals.append(Signal(symbol, "macd_bullish", macd_line, {
+                            "signal_line": signal_line, "histogram": histogram
+                        }))
+                elif macd_line < signal_line and histogram < 0:
+                    if self._should_emit(symbol, "macd_bearish"):
+                        signals.append(Signal(symbol, "macd_bearish", macd_line, {
+                            "signal_line": signal_line, "histogram": histogram
+                        }))
 
         if len(volumes) >= 20:
             vol_avg = ti.volume_sma(volumes, 20)
-            if vol_avg > 0 and volumes[-1] > vol_avg * 2.0:
-                if self._should_emit(symbol, "volume_spike"):
-                    signals.append(Signal(symbol, "volume_spike", float(volumes[-1]), {
-                        "avg_volume": vol_avg, "ratio": float(volumes[-1] / vol_avg)
-                    }))
+            current_vol = float(volumes[-1])
+            if vol_avg > 0 and math.isfinite(current_vol) and current_vol > vol_avg * 2.0:
+                ratio = current_vol / vol_avg if vol_avg > 0 else 0.0
+                if math.isfinite(ratio) and ratio > 0:
+                    if self._should_emit(symbol, "volume_spike"):
+                        signals.append(Signal(symbol, "volume_spike", current_vol, {
+                            "avg_volume": vol_avg, "ratio": ratio
+                        }))
 
         upper, middle, lower = ti.bollinger_bands(closes)
         current = float(closes[-1])

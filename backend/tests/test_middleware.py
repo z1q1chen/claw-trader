@@ -86,3 +86,63 @@ async def test_rate_limit_independent_per_ip():
         await middleware.dispatch(req2, call_next)
 
     assert call_next.call_count == 4
+
+
+class TestJSONFormatter:
+    """Test JSON logging formatter."""
+
+    def test_json_formatter_output_structure(self):
+        import json as json_lib
+        import logging
+        from app.core.logging import JSONFormatter
+
+        formatter = JSONFormatter()
+        record = logging.LogRecord(
+            name="test_logger",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=42,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
+
+        output = formatter.format(record)
+        parsed = json_lib.loads(output)
+
+        assert "timestamp" in parsed
+        assert "level" in parsed
+        assert "logger" in parsed
+        assert "message" in parsed
+        assert parsed["level"] == "INFO"
+        assert parsed["logger"] == "test_logger"
+        assert parsed["message"] == "Test message"
+
+    def test_json_formatter_with_exception(self):
+        import json as json_lib
+        import logging
+        from app.core.logging import JSONFormatter
+
+        formatter = JSONFormatter()
+        try:
+            raise ValueError("Test error")
+        except ValueError:
+            import sys
+            exc_info = sys.exc_info()
+
+        record = logging.LogRecord(
+            name="test_logger",
+            level=logging.ERROR,
+            pathname="test.py",
+            lineno=42,
+            msg="Error occurred",
+            args=(),
+            exc_info=exc_info,
+        )
+
+        output = formatter.format(record)
+        parsed = json_lib.loads(output)
+
+        assert "exception" in parsed
+        assert "ValueError" in parsed["exception"]
+        assert "Test error" in parsed["exception"]

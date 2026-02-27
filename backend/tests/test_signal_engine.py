@@ -844,5 +844,66 @@ def test_signal_cooldown_configurable():
         assert engine._signal_cooldown_s == 30.0
 
 
+class TestSignalEngineEdgeCases:
+    """Test signal engine protection against NaN/Inf and edge cases."""
+
+    def test_rsi_with_zero_volume_protection(self):
+        """RSI should handle edge cases gracefully without returning NaN/Inf."""
+        # All same price = avg_loss and avg_gain both 0
+        closes = np.array([100.0] * 20)
+        rsi = TechnicalIndicators.rsi(closes, period=14)
+        assert np.isfinite(rsi), "RSI should return finite value"
+        assert 0.0 <= rsi <= 100.0, "RSI should be in valid range"
+
+    def test_rsi_returns_safe_value_on_edge(self):
+        """RSI should return 50 when all values are flat."""
+        closes = np.array([100.0] * 16)
+        rsi = TechnicalIndicators.rsi(closes, period=14)
+        assert rsi == 50.0, "RSI should return 50.0 for flat prices"
+
+    def test_volume_spike_detection_with_zero_volume(self):
+        """Volume spike detection should not emit signals with zero volume."""
+        engine = SignalEngine()
+        volumes = np.array([0.0] * 25)  # All zero volumes
+        closes = np.array([100.0] * 25)
+
+        signals = engine._detect_signals("AAPL", closes, volumes)
+        # Should not crash and should not detect volume spike with zero volumes
+        assert all(sig.signal_type != "volume_spike" for sig in signals)
+
+    def test_volume_spike_with_nan_protection(self):
+        """Volume spike should be protected against NaN values."""
+        engine = SignalEngine()
+        volumes = np.array([100.0] * 19 + [np.nan])  # Last volume is NaN
+        closes = np.array([100.0] * 20)
+
+        signals = engine._detect_signals("AAPL", closes, volumes)
+        # Should not crash and should filter out NaN
+        assert all(sig.signal_type != "volume_spike" for sig in signals)
+
+    def test_macd_with_finite_check(self):
+        """MACD should verify values are finite before emitting signals."""
+        engine = SignalEngine()
+        closes = np.array([100.0] * 30)  # Flat price, might cause issues
+
+        signals = engine._detect_signals("AAPL", closes, np.array([100.0] * 30))
+        # With flat prices, MACD values should all be 0, which is finite
+        assert all(sig.signal_type != "macd_bullish" or np.isfinite(sig.value) for sig in signals)
+        assert all(sig.signal_type != "macd_bearish" or np.isfinite(sig.value) for sig in signals)
+
+    def test_rsi_oversold_with_protection(self):
+        """RSI oversold signal should be emitted only with finite values."""
+        engine = SignalEngine()
+        # Create declining prices for oversold conditions
+        closes = np.linspace(100.0, 20.0, 20)  # Steep decline
+
+        # Mock _should_emit to allow signal
+        with patch.object(engine, "_should_emit", return_value=True):
+            signals = engine._detect_signals("AAPL", closes, np.array([100.0] * 20))
+            rsi_signals = [s for s in signals if s.signal_type == "rsi_oversold"]
+            if rsi_signals:
+                assert np.isfinite(rsi_signals[0].value), "RSI value should be finite"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

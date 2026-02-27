@@ -69,6 +69,8 @@ export default function Dashboard() {
   });
   const [tradeStatus, setTradeStatus] = useState<string | null>(null);
   const [stats, setStats] = useState<Record<string, any>>({});
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<{ close: () => void } | null>(null);
 
   const refreshData = useCallback(async () => {
@@ -106,25 +108,29 @@ export default function Dashboard() {
 
   useEffect(() => {
     refreshData();
-    const interval = setInterval(refreshData, 5000);
+    const pollInterval = wsConnected ? 30000 : 5000;
+    const interval = setInterval(refreshData, pollInterval);
     return () => clearInterval(interval);
-  }, [refreshData]);
+  }, [refreshData, wsConnected]);
 
   useEffect(() => {
-    const conn = createWebSocket((event) => {
-      setEventLog((prev) => [
-        {
-          time: new Date().toLocaleTimeString(),
-          type: event.type,
-          data: JSON.stringify(event.data).slice(0, 120),
-        },
-        ...prev.slice(0, 99),
-      ]);
+    const conn = createWebSocket(
+      (event) => {
+        setEventLog((prev) => [
+          {
+            time: new Date().toLocaleTimeString(),
+            type: event.type,
+            data: JSON.stringify(event.data).slice(0, 120),
+          },
+          ...prev.slice(0, 99),
+        ]);
 
-      if (event.type === "order_executed" || event.type === "trade_rejected") {
-        refreshData();
-      }
-    });
+        if (event.type === "order_executed" || event.type === "trade_rejected") {
+          refreshData();
+        }
+      },
+      (connected) => setWsConnected(connected)
+    );
     wsRef.current = conn;
     return () => conn.close();
   }, [refreshData]);
@@ -210,6 +216,19 @@ export default function Dashboard() {
     }
   };
 
+  const handleCancelOrder = async (orderId: string, broker: string) => {
+    setCancellingOrderId(orderId);
+    try {
+      await api.cancelOrder(broker, orderId);
+      setTradeStatus(`Order ${orderId} cancelled successfully`);
+      refreshData();
+    } catch (e: any) {
+      setTradeStatus(`Error: Failed to cancel order ${orderId}: ${e.message}`);
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
   const loadTrendingMarkets = async () => {
     setMarketsLoading(true);
     try {
@@ -245,6 +264,13 @@ export default function Dashboard() {
               className={`status-dot ${health === "connected" ? "green" : "red"}`}
             />
             {health}
+          </span>
+          <span style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              className={`status-dot ${wsConnected ? "green" : "yellow"}`}
+              style={{ width: 8, height: 8 }}
+            />
+            {wsConnected ? "Live" : "Polling"}
           </span>
           <button
             className={`kill-switch ${killSwitch ? "active" : ""}`}
@@ -890,6 +916,7 @@ export default function Dashboard() {
                   <th>Qty</th>
                   <th>Filled Price</th>
                   <th>Status</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -906,6 +933,18 @@ export default function Dashboard() {
                     <td>{o.quantity}</td>
                     <td>{o.filled_price ? `$${o.filled_price.toFixed(2)}` : "-"}</td>
                     <td>{o.status}</td>
+                    <td>
+                      {(o.status === "pending" || o.status === "submitted") && (
+                        <button
+                          className="btn"
+                          style={{ fontSize: 11, padding: "2px 8px" }}
+                          onClick={() => handleCancelOrder(String(o.id), o.broker)}
+                          disabled={cancellingOrderId === String(o.id)}
+                        >
+                          {cancellingOrderId === String(o.id) ? "Cancelling..." : "Cancel"}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -26,11 +26,16 @@ class TestHealthEndpoint:
         with patch("app.main.signal_engine") as mock_sig, \
              patch("app.main.llm_brain") as mock_llm, \
              patch("app.main.risk_engine") as mock_risk, \
-             patch("app.main.execution_engine") as mock_exec:
+             patch("app.main.execution_engine") as mock_exec, \
+             patch("app.api.routes.get_latest_timestamps", new_callable=AsyncMock) as mock_timestamps:
             mock_sig._running = True
             mock_llm._provider = "gemini"
             mock_risk.kill_switch_active = False
             mock_exec._brokers = {"ibkr": MagicMock()}
+            mock_timestamps.return_value = {
+                "last_signal_at": "2024-01-01T12:00:00+00:00",
+                "last_decision_at": "2024-01-01T12:00:00+00:00",
+            }
 
             resp = client.get("/api/health")
             assert resp.status_code == 200
@@ -38,6 +43,10 @@ class TestHealthEndpoint:
             assert data["status"] == "ok"
             assert "engines" in data
             assert "signal_engine" in data["engines"]
+            assert "db_connected" in data
+            assert "last_signal_at" in data
+            assert "last_decision_at" in data
+            assert "uptime_s" in data
 
 
 class TestRiskEndpoints:
@@ -159,8 +168,8 @@ class TestOrderEndpoints:
             mock_broker.cancel_order.return_value = False
             mock_exec._brokers = {"ibkr": mock_broker}
 
-            resp = client.post("/api/orders/nonexistent/cancel")
-            assert resp.status_code == 404
+            resp = client.post("/api/orders/nonexistent/cancel", json={"broker": "ibkr"})
+            assert resp.status_code == 400
 
 
 class TestPositionEndpoints:
@@ -232,3 +241,101 @@ def test_mask_key_short():
     from app.api.routes import _mask_key
     assert _mask_key("ab") == "ab"
     assert _mask_key("abc") == "abc"
+
+
+class TestPaginatedEndpoints:
+    """Test pagination envelope structure on list endpoints."""
+
+    def test_decisions_pagination_structure(self, client):
+        with patch("app.api.routes.aiosqlite.connect") as mock_connect, \
+             patch("app.api.routes.count_trade_decisions", new_callable=AsyncMock) as mock_count:
+            mock_db = AsyncMock()
+            mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_db.__aexit__ = AsyncMock(return_value=None)
+            mock_connect.return_value = mock_db
+
+            mock_cursor = AsyncMock()
+            mock_cursor.fetchall = AsyncMock(return_value=[])
+            mock_db.execute = AsyncMock(return_value=mock_cursor)
+            mock_count.return_value = 100
+
+            response = client.get("/api/decisions?limit=50&offset=0")
+            assert response.status_code == 200
+            data = response.json()
+            assert "data" in data
+            assert "total" in data
+            assert "limit" in data
+            assert "offset" in data
+            assert "has_more" in data
+            assert data["total"] == 100
+            assert data["limit"] == 50
+            assert data["offset"] == 0
+            assert data["has_more"] is True
+
+    def test_orders_pagination_structure(self, client):
+        with patch("app.api.routes.aiosqlite.connect") as mock_connect, \
+             patch("app.api.routes.count_orders", new_callable=AsyncMock) as mock_count:
+            mock_db = AsyncMock()
+            mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_db.__aexit__ = AsyncMock(return_value=None)
+            mock_connect.return_value = mock_db
+
+            mock_cursor = AsyncMock()
+            mock_cursor.fetchall = AsyncMock(return_value=[])
+            mock_db.execute = AsyncMock(return_value=mock_cursor)
+            mock_count.return_value = 75
+
+            response = client.get("/api/orders?limit=25&offset=50")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total"] == 75
+            assert data["limit"] == 25
+            assert data["offset"] == 50
+            assert data["has_more"] is False
+
+    def test_signals_pagination_structure(self, client):
+        with patch("app.api.routes.aiosqlite.connect") as mock_connect, \
+             patch("app.api.routes.count_signals", new_callable=AsyncMock) as mock_count:
+            mock_db = AsyncMock()
+            mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_db.__aexit__ = AsyncMock(return_value=None)
+            mock_connect.return_value = mock_db
+
+            mock_cursor = AsyncMock()
+            mock_cursor.fetchall = AsyncMock(return_value=[])
+            mock_db.execute = AsyncMock(return_value=mock_cursor)
+            mock_count.return_value = 200
+
+            response = client.get("/api/signals?limit=100&offset=0")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total"] == 200
+            assert data["has_more"] is True
+
+
+class TestEnhancedHealthCheck:
+    """Test the enhanced health check endpoint."""
+
+    def test_health_includes_new_fields(self, client):
+        with patch("app.main.signal_engine") as mock_sig, \
+             patch("app.main.llm_brain") as mock_llm, \
+             patch("app.main.risk_engine") as mock_risk, \
+             patch("app.main.execution_engine") as mock_exec, \
+             patch("app.api.routes.get_latest_timestamps", new_callable=AsyncMock) as mock_timestamps:
+            mock_sig._running = True
+            mock_llm._provider = "gemini"
+            mock_risk.kill_switch_active = False
+            mock_exec._brokers = {}
+            mock_timestamps.return_value = {
+                "last_signal_at": "2024-01-01T12:00:00+00:00",
+                "last_decision_at": "2024-01-01T11:00:00+00:00",
+            }
+
+            resp = client.get("/api/health")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["db_connected"] is not None
+            assert data["last_signal_at"] == "2024-01-01T12:00:00+00:00"
+            assert data["last_decision_at"] == "2024-01-01T11:00:00+00:00"
+            assert data["uptime_s"] >= 0
+            assert isinstance(data["uptime_s"], (int, float))

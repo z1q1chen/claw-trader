@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config
+from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config, get_stale_orders, update_order_status
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
 from app.core.middleware import RateLimitMiddleware
@@ -126,6 +126,47 @@ async def periodic_portfolio_sync() -> None:
         await asyncio.sleep(settings.portfolio_sync_interval_s)
 
 
+async def periodic_order_reconciliation() -> None:
+    """Periodically check stale orders against broker state and update if diverged."""
+    while True:
+        try:
+            stale_orders = await get_stale_orders(max_age_seconds=30)
+            for order in stale_orders:
+                order_id = order["id"]
+                broker_name = order["broker"]
+                broker_order_id = order["broker_order_id"]
+
+                if broker_name not in execution_engine._brokers or not broker_order_id:
+                    continue
+
+                broker = execution_engine._brokers[broker_name]
+
+                try:
+                    order_history = await broker.get_order_history(limit=100)
+                    broker_order = next(
+                        (o for o in order_history if o.get("id") == broker_order_id or o.get("broker_order_id") == broker_order_id),
+                        None
+                    )
+
+                    if broker_order:
+                        broker_status = broker_order.get("status", "unknown")
+                        if broker_status != order["status"]:
+                            await update_order_status(
+                                order_id,
+                                status=broker_status,
+                                filled_price=broker_order.get("filled_price"),
+                                filled_quantity=broker_order.get("filled_quantity"),
+                            )
+                            logger.info(f"Reconciled order {order_id}: DB status was {order['status']}, broker status is {broker_status}")
+                except Exception as e:
+                    logger.warning(f"Failed to reconcile order {order_id} with broker {broker_name}: {e}")
+
+        except Exception as e:
+            logger.error(f"Order reconciliation error: {e}")
+
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -186,6 +227,9 @@ async def lifespan(app: FastAPI):
     # Start daily reset task
     reset_task = asyncio.create_task(periodic_daily_reset())
 
+    # Start order reconciliation task
+    reconciliation_task = asyncio.create_task(periodic_order_reconciliation())
+
     # Start signal engine with appropriate feed
     if settings.polymarket_condition_ids:
         from app.feeds.polymarket_feed import PolymarketPriceFeed
@@ -200,23 +244,19 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    logger.info("Shutting down Claw Trader...")
     await feed.stop()
     signal_engine.stop()
-    signal_task.cancel()
-    try:
-        await signal_task
-    except asyncio.CancelledError:
-        pass
-    sync_task.cancel()
-    try:
-        await sync_task
-    except asyncio.CancelledError:
-        pass
-    reset_task.cancel()
-    try:
-        await reset_task
-    except asyncio.CancelledError:
-        pass
+
+    for task_name, task in [("signal", signal_task), ("sync", sync_task), ("reset", reset_task), ("reconciliation", reconciliation_task)]:
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        logger.info(f"Task '{task_name}' stopped")
+
+    logger.info("Claw Trader shutdown complete")
 
 
 app = FastAPI(title="Claw Trader", version="0.1.0", lifespan=lifespan)

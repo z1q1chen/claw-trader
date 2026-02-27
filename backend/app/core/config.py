@@ -7,6 +7,7 @@ from pydantic import Field
 class Settings(BaseSettings):
     app_name: str = "Claw Trader"
     debug: bool = False
+    log_format: str = "text"  # "text" or "json"
 
     # CORS
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"])

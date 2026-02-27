@@ -102,8 +102,12 @@ export const api = {
     }),
 
   // Order Management
-  cancelOrder: (orderId: string) =>
-    fetchJSON<Order>(`/orders/${orderId}/cancel`, { method: "POST" }),
+  cancelOrder: (broker: string, orderId: string) =>
+    fetchJSON<{ success: boolean }>(`/orders/${orderId}/cancel`, {
+      method: "POST",
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ broker }),
+    }),
 
   // Live Risk
   getLiveRisk: () => fetchJSON<RiskSnapshot>("/risk/live"),
@@ -127,7 +131,8 @@ export const api = {
 };
 
 export function createWebSocket(
-  onMessage: (event: { type: string; data: Record<string, unknown>; timestamp: string }) => void
+  onMessage: (event: { type: string; data: Record<string, unknown>; timestamp: string }) => void,
+  onConnectionChange?: (connected: boolean) => void
 ): { close: () => void } {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = `${protocol}//${window.location.host}/ws`;
@@ -141,6 +146,7 @@ export function createWebSocket(
 
     ws.onopen = () => {
       reconnectDelay = 1000; // Reset backoff on successful connect
+      onConnectionChange?.(true);
     };
 
     ws.onmessage = (e) => {
@@ -152,6 +158,7 @@ export function createWebSocket(
     };
 
     ws.onclose = () => {
+      onConnectionChange?.(false);
       if (shouldReconnect) {
         reconnectTimer = setTimeout(() => {
           reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Max 30s

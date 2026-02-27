@@ -4,14 +4,25 @@ import asyncio
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, Literal
 
 from app.core.logging import logger
+
+EventType = Literal[
+    "signal",
+    "order_executed",
+    "order_failed",
+    "order_cancelled",
+    "trade_rejected",
+    "llm_config_changed",
+    "kill_switch_toggle",
+    "risk_config_updated",
+]
 
 
 @dataclass
 class Event:
-    type: str
+    type: EventType
     data: dict[str, Any] = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -23,13 +34,13 @@ class EventBus:
     """In-process async event bus for decoupling signal -> brain -> risk -> execution."""
 
     def __init__(self) -> None:
-        self._handlers: dict[str, list[EventHandler]] = {}
+        self._handlers: dict[EventType, list[EventHandler]] = {}
         self._ws_clients: set[asyncio.Queue] = set()
 
-    def subscribe(self, event_type: str, handler: EventHandler) -> None:
+    def subscribe(self, event_type: EventType, handler: EventHandler) -> None:
         self._handlers.setdefault(event_type, []).append(handler)
 
-    def unsubscribe(self, event_type: str, handler: EventHandler) -> None:
+    def unsubscribe(self, event_type: EventType, handler: EventHandler) -> None:
         handlers = self._handlers.get(event_type, [])
         if handler in handlers:
             handlers.remove(handler)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import aiosqlite
@@ -9,11 +10,32 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.database import DB_PATH, save_risk_config
+from app.core.database import (
+    DB_PATH,
+    save_risk_config,
+    get_latest_timestamps,
+    count_orders,
+    count_trade_decisions,
+    count_signals,
+    count_api_usage,
+    count_risk_snapshots,
+)
 from app.core.events import Event, event_bus
 from app.core.logging import logger
 
 router = APIRouter()
+_app_start_time = time.monotonic()
+
+
+def paginated_response(data: list, total: int, limit: int, offset: int) -> dict:
+    """Build a pagination envelope for API responses."""
+    return {
+        "data": data,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + limit < total,
+    }
 
 
 # --- Pydantic models ---
@@ -111,7 +133,9 @@ async def get_api_usage(limit: int = 100, offset: int = 0):
             "SELECT * FROM api_usage ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    total = await count_api_usage()
+    data = [dict(r) for r in rows]
+    return paginated_response(data, total, limit, offset)
 
 
 @router.get("/api/usage/summary")
@@ -145,7 +169,9 @@ async def get_trade_decisions(limit: int = 50, offset: int = 0):
             "SELECT * FROM trade_decisions ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    total = await count_trade_decisions()
+    data = [dict(r) for r in rows]
+    return paginated_response(data, total, limit, offset)
 
 
 # --- Orders ---
@@ -158,7 +184,9 @@ async def get_orders(limit: int = 50, offset: int = 0):
             "SELECT * FROM orders ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    total = await count_orders()
+    data = [dict(r) for r in rows]
+    return paginated_response(data, total, limit, offset)
 
 
 # --- Positions ---
@@ -234,7 +262,9 @@ async def get_risk_history(limit: int = 100, offset: int = 0):
             "SELECT * FROM risk_snapshots ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    total = await count_risk_snapshots()
+    data = [dict(r) for r in rows]
+    return paginated_response(data, total, limit, offset)
 
 
 @router.get("/api/risk/config")
@@ -312,7 +342,9 @@ async def get_recent_signals(limit: int = 100, offset: int = 0):
             "SELECT * FROM signals ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    total = await count_signals()
+    data = [dict(r) for r in rows]
+    return paginated_response(data, total, limit, offset)
 
 
 # --- WebSocket for real-time updates ---
@@ -417,14 +449,27 @@ async def manual_trade(req: ManualTradeRequest):
     }
 
 
+class CancelOrderRequest(BaseModel):
+    broker: str
+
+
 @router.post("/api/orders/{order_id}/cancel")
-async def cancel_order(order_id: str):
+async def cancel_order(order_id: str, req: CancelOrderRequest):
     from app.main import execution_engine
-    for broker_name, broker in execution_engine._brokers.items():
-        success = await broker.cancel_order(order_id)
-        if success:
-            return {"status": "ok", "message": f"Order {order_id} cancelled via {broker_name}"}
-    raise HTTPException(status_code=404, detail=f"Order {order_id} not found in any broker")
+    if req.broker not in execution_engine._brokers:
+        raise HTTPException(status_code=404, detail=f"Broker {req.broker} not registered")
+    broker = execution_engine._brokers[req.broker]
+    success = await broker.cancel_order(order_id)
+    if success:
+        await event_bus.publish(Event(
+            type="order_cancelled",
+            data={
+                "order_id": order_id,
+                "broker": req.broker,
+            }
+        ))
+        return {"success": True, "message": f"Order {order_id} cancelled"}
+    raise HTTPException(status_code=400, detail=f"Failed to cancel order {order_id}")
 
 
 @router.get("/api/orders/broker/{broker}")
@@ -571,9 +616,25 @@ async def update_signal_cooldown(req: CooldownConfigRequest):
 @router.get("/api/health")
 async def health():
     from app.main import signal_engine, llm_brain, risk_engine, execution_engine
+
+    db_connected = False
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("SELECT 1")
+            db_connected = True
+    except Exception:
+        pass
+
+    timestamps = await get_latest_timestamps()
+    uptime_s = time.monotonic() - _app_start_time
+
     return {
         "status": "ok",
         "app": settings.app_name,
+        "db_connected": db_connected,
+        "last_signal_at": timestamps["last_signal_at"],
+        "last_decision_at": timestamps["last_decision_at"],
+        "uptime_s": uptime_s,
         "engines": {
             "signal_engine": signal_engine._running,
             "llm_configured": llm_brain._provider is not None,

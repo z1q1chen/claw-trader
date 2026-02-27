@@ -344,3 +344,65 @@ async def load_llm_config() -> dict | None:
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+async def get_latest_timestamps() -> dict[str, str | None]:
+    """Get the most recent signal and trade decision timestamps from database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        signal_row = await (await db.execute("SELECT MAX(created_at) FROM signals")).fetchone()
+        decision_row = await (await db.execute("SELECT MAX(created_at) FROM trade_decisions")).fetchone()
+        return {
+            "last_signal_at": signal_row[0] if signal_row and signal_row[0] else None,
+            "last_decision_at": decision_row[0] if decision_row and decision_row[0] else None,
+        }
+
+
+async def count_orders() -> int:
+    """Get total count of orders in database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM orders")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def count_trade_decisions() -> int:
+    """Get total count of trade decisions in database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM trade_decisions")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def count_signals() -> int:
+    """Get total count of signals in database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM signals")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def count_api_usage() -> int:
+    """Get total count of API usage records in database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM api_usage")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def count_risk_snapshots() -> int:
+    """Get total count of risk snapshots in database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM risk_snapshots")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def get_stale_orders(max_age_seconds: int = 30) -> list[dict]:
+    """Get orders that are still pending/submitted and older than max_age_seconds."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT * FROM orders WHERE status IN ('pending', 'submitted') AND created_at < datetime('now', ?)",
+            (f'-{max_age_seconds} seconds',)
+        )).fetchall()
+        return [dict(row) for row in rows]
