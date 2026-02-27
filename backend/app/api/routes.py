@@ -153,6 +153,18 @@ async def get_positions():
         return [dict(r) for r in rows]
 
 
+@router.get("/api/positions/all")
+async def get_all_positions():
+    """Get positions from all connected brokers."""
+    from app.main import execution_engine
+    try:
+        all_positions = await execution_engine.get_all_positions()
+        return all_positions
+    except Exception as e:
+        logger.error(f"All positions fetch error: {e}")
+        return {}
+
+
 # --- Balance ---
 
 @router.get("/api/balance/{broker}")

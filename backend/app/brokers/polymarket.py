@@ -194,7 +194,7 @@ class PolymarketAdapter(BrokerAdapter):
                             positions[condition_id] = {
                                 "token_id": pos.get("token_id"),
                                 "quantity": float(pos.get("quantity", 0)),
-                                "avg_price": float(pos.get("avg_price", 0)),
+                                "avg_cost": float(pos.get("avg_price", 0)),
                                 "market_value": float(pos.get("market_value", 0)),
                             }
                     return positions

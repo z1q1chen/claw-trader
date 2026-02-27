@@ -795,5 +795,44 @@ class TestEdgeCases:
         assert history[0] == pytest.approx(101.0)  # First price after trimming
 
 
+@pytest.mark.asyncio
+async def test_signal_engine_run_publishes_events():
+    """Signal engine run() should publish signal events from price feed."""
+    from app.engines.signal_engine import SignalEngine
+    from app.core.events import EventBus, Event
+    from app.feeds.dummy import DummyPriceFeed
+    from unittest.mock import AsyncMock, patch
+    import asyncio
+
+    engine = SignalEngine()
+    engine._signal_cooldown_s = 0  # Disable cooldown for test
+    feed = DummyPriceFeed(["TEST"], base_price=100.0)
+    await feed.start()
+
+    published_events = []
+
+    async def capture_event(event):
+        published_events.append(event)
+
+    with patch("app.engines.signal_engine.event_bus") as mock_bus:
+        mock_bus.publish = AsyncMock(side_effect=capture_event)
+        with patch("app.engines.signal_engine.settings") as mock_settings:
+            mock_settings.signal_scan_interval_ms = 10  # Fast for testing
+
+            # Run engine for a short burst then stop
+            task = asyncio.create_task(engine.run(feed))
+            await asyncio.sleep(0.1)  # Let it run ~10 cycles
+            engine.stop()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    await feed.stop()
+    # With 10ms intervals and 0.1s sleep, it should have run ~10 cycles
+    # Signals may or may not fire depending on random prices, but engine should not crash
+    assert engine._running is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

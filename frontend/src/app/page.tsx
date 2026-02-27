@@ -510,7 +510,7 @@ export default function Dashboard() {
           )}
           {brokers.brokers.length === 0 && (
             <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
-              No brokers connected. Connect IBKR TWS/Gateway to trade.
+              No brokers connected. Connect IBKR for stocks or Polymarket for prediction markets.
             </p>
           )}
           {brokerStatus && (

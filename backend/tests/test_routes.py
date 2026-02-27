@@ -161,3 +161,11 @@ class TestOrderEndpoints:
 
             resp = client.post("/api/orders/nonexistent/cancel")
             assert resp.status_code == 404
+
+
+class TestPositionEndpoints:
+    def test_get_all_positions(self, client):
+        with patch("app.main.execution_engine") as mock_exec:
+            mock_exec.get_all_positions = AsyncMock(return_value={})
+            response = client.get("/api/positions/all")
+            assert response.status_code == 200

@@ -131,6 +131,19 @@ async def init_db() -> None:
         """)
         await db.commit()
 
+        # Add indexes for performance
+        await db.executescript("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_broker_symbol
+                ON positions (broker, symbol);
+            CREATE INDEX IF NOT EXISTS idx_signals_created_at
+                ON signals (created_at);
+            CREATE INDEX IF NOT EXISTS idx_orders_status
+                ON orders (status);
+            CREATE INDEX IF NOT EXISTS idx_trade_decisions_created_at
+                ON trade_decisions (created_at);
+        """)
+        await db.commit()
+
 
 async def log_api_usage(
     provider: str,
@@ -263,27 +276,20 @@ async def upsert_position(
     unrealized_pnl: float, realized_pnl: float,
 ) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT id FROM positions WHERE broker = ? AND symbol = ?",
-            (broker, symbol),
+        await db.execute(
+            """INSERT INTO positions (broker, symbol, quantity, avg_entry_price,
+               current_price, unrealized_pnl, realized_pnl, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(broker, symbol) DO UPDATE SET
+               quantity = excluded.quantity,
+               avg_entry_price = excluded.avg_entry_price,
+               current_price = excluded.current_price,
+               unrealized_pnl = excluded.unrealized_pnl,
+               realized_pnl = excluded.realized_pnl,
+               updated_at = datetime('now')""",
+            (broker, symbol, quantity, avg_entry_price, current_price,
+             unrealized_pnl, realized_pnl),
         )
-        row = await cursor.fetchone()
-        if row:
-            await db.execute(
-                """UPDATE positions SET quantity = ?, avg_entry_price = ?,
-                   current_price = ?, unrealized_pnl = ?, realized_pnl = ?,
-                   updated_at = datetime('now')
-                   WHERE id = ?""",
-                (quantity, avg_entry_price, current_price, unrealized_pnl, realized_pnl, row[0]),
-            )
-        else:
-            await db.execute(
-                """INSERT INTO positions (broker, symbol, quantity, avg_entry_price,
-                   current_price, unrealized_pnl, realized_pnl)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (broker, symbol, quantity, avg_entry_price, current_price,
-                 unrealized_pnl, realized_pnl),
-            )
         await db.commit()
 
 
