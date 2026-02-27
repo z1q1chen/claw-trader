@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # Dry-run mode
     dry_run_mode: bool = True  # Default to dry-run for safety
 
+    # API authentication
+    api_secret_key: str = ""  # Set CT_API_SECRET_KEY to enable auth
+    auth_enabled: bool = False  # Set CT_AUTH_ENABLED=true to require auth
+
     model_config = {"env_file": ".env", "env_prefix": "CT_"}
 
 

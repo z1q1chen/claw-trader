@@ -578,12 +578,23 @@ class TestPerformanceSummaryPnL:
 class TestSignalConfigValidation:
     """Test signal config update validation."""
 
+    def _make_signal_config_mock(self):
+        mock_cfg = MagicMock()
+        mock_cfg.rsi_period = 14
+        mock_cfg.rsi_oversold = 30.0
+        mock_cfg.rsi_overbought = 70.0
+        mock_cfg.macd_fast = 12
+        mock_cfg.macd_slow = 26
+        mock_cfg.macd_signal = 9
+        mock_cfg.volume_spike_ratio = 2.0
+        mock_cfg.bb_period = 20
+        mock_cfg.bb_std_dev = 2.0
+        return mock_cfg
+
     def test_signal_config_valid_update(self, client):
         """Test valid signal config update."""
         with patch("app.main.signal_engine") as mock_sig:
-            mock_cfg = MagicMock()
-            mock_cfg.rsi_period = 14
-            mock_cfg.rsi_oversold = 30
+            mock_cfg = self._make_signal_config_mock()
             mock_sig.signal_config = mock_cfg
 
             resp = client.post("/api/config/signal", json={
@@ -598,8 +609,7 @@ class TestSignalConfigValidation:
     def test_signal_config_rejects_negative(self, client):
         """Test that negative values are rejected."""
         with patch("app.main.signal_engine") as mock_sig:
-            mock_cfg = MagicMock()
-            mock_cfg.rsi_period = 14
+            mock_cfg = self._make_signal_config_mock()
             mock_sig.signal_config = mock_cfg
 
             resp = client.post("/api/config/signal", json={
@@ -613,8 +623,7 @@ class TestSignalConfigValidation:
     def test_signal_config_rejects_invalid_type(self, client):
         """Test that invalid type conversions are rejected."""
         with patch("app.main.signal_engine") as mock_sig:
-            mock_cfg = MagicMock()
-            mock_cfg.rsi_period = 14
+            mock_cfg = self._make_signal_config_mock()
             mock_sig.signal_config = mock_cfg
 
             resp = client.post("/api/config/signal", json={
@@ -628,8 +637,7 @@ class TestSignalConfigValidation:
     def test_signal_config_rejects_zero(self, client):
         """Test that zero values are rejected."""
         with patch("app.main.signal_engine") as mock_sig:
-            mock_cfg = MagicMock()
-            mock_cfg.macd_fast = 12
+            mock_cfg = self._make_signal_config_mock()
             mock_sig.signal_config = mock_cfg
 
             resp = client.post("/api/config/signal", json={
@@ -708,3 +716,247 @@ class TestPositionSizingEndpoints:
             assert resp.status_code == 200
             # Invalid method should be ignored, not set
             assert mock_exec._position_sizer.config.method == original_method
+
+
+class TestExportEndpoints:
+    """Test CSV and JSON export endpoints."""
+
+    def test_export_trades_csv(self, client):
+        """Test /api/export/trades returns valid CSV."""
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_trades:
+            mock_trades.return_value = [
+                {"id": 1, "broker": "ibkr", "symbol": "AAPL", "side": "BUY", "order_type": "MARKET", "quantity": 10, "filled_price": 150.0, "filled_quantity": 10, "status": "filled", "created_at": "2024-01-01T12:00:00"},
+            ]
+            resp = client.get("/api/export/trades?format=csv")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+            assert "id,broker,symbol" in resp.text
+            assert "AAPL" in resp.text
+
+    def test_export_trades_json(self, client):
+        """Test /api/export/trades returns JSON."""
+        with patch("app.api.routes.get_trade_pnl_data", new_callable=AsyncMock) as mock_trades:
+            mock_trades.return_value = [
+                {"id": 1, "broker": "ibkr", "symbol": "AAPL", "side": "BUY", "order_type": "MARKET", "quantity": 10, "filled_price": 150.0, "filled_quantity": 10, "status": "filled", "created_at": "2024-01-01T12:00:00"},
+            ]
+            resp = client.get("/api/export/trades?format=json")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert isinstance(data, list)
+            assert len(data) == 1
+            assert data[0]["symbol"] == "AAPL"
+
+    def test_export_signals_csv(self, client):
+        """Test /api/export/signals returns valid CSV."""
+        with patch("app.api.routes.aiosqlite.connect") as mock_connect:
+            mock_db = AsyncMock()
+            mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_db.__aexit__ = AsyncMock(return_value=None)
+            mock_connect.return_value = mock_db
+
+            mock_cursor = AsyncMock()
+            mock_cursor.fetchall = AsyncMock(return_value=[
+                MagicMock(id=1, symbol="AAPL", signal_type="RSI", value=35.0, metadata="{}", created_at="2024-01-01T12:00:00")
+            ])
+            mock_db.execute = AsyncMock(return_value=mock_cursor)
+
+            resp = client.get("/api/export/signals?format=csv")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+            assert "id,symbol,signal_type" in resp.text
+
+    def test_export_decisions_csv(self, client):
+        """Test /api/export/decisions returns valid CSV."""
+        with patch("app.api.routes.aiosqlite.connect") as mock_connect:
+            mock_db = AsyncMock()
+            mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_db.__aexit__ = AsyncMock(return_value=None)
+            mock_connect.return_value = mock_db
+
+            mock_cursor = AsyncMock()
+            mock_row = MagicMock()
+            mock_row.__getitem__ = MagicMock(side_effect=lambda k: {
+                'id': 1, 'strategy': 'signal', 'symbol': 'AAPL', 'side': 'BUY',
+                'quantity': 10, 'price': 150.0, 'reasoning': 'RSI oversold', 'confidence': 0.95,
+                'risk_check_passed': 1, 'created_at': '2024-01-01T12:00:00'
+            }.get(k))
+            mock_row.keys = MagicMock(return_value=['id', 'strategy', 'symbol', 'side', 'quantity', 'price', 'reasoning', 'confidence', 'risk_check_passed', 'created_at'])
+            mock_cursor.fetchall = AsyncMock(return_value=[mock_row])
+            mock_db.execute = AsyncMock(return_value=mock_cursor)
+
+            resp = client.get("/api/export/decisions?format=csv")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "text/csv; charset=utf-8"
+            assert "id,strategy,symbol" in resp.text
+
+
+class TestStrategyPresets:
+    """Test strategy preset endpoints."""
+
+    def test_get_strategy_presets(self, client):
+        """Test /api/presets returns all presets."""
+        resp = client.get("/api/presets")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "conservative" in data
+        assert "balanced" in data
+        assert "aggressive" in data
+        assert "description" in data["conservative"]
+        assert "signal_config" in data["conservative"]
+        assert "position_sizing" in data["conservative"]
+
+    def test_apply_strategy_preset_valid(self, client):
+        """Test /api/presets/{preset_name}/apply applies preset."""
+        with patch("app.main.signal_engine") as mock_sig, \
+             patch("app.main.execution_engine") as mock_exec:
+            mock_cfg = MagicMock()
+            mock_cfg.rsi_period = 14
+            mock_cfg.rsi_oversold = 30
+            mock_cfg.rsi_overbought = 70
+            mock_cfg.macd_fast = 12
+            mock_cfg.macd_slow = 26
+            mock_cfg.macd_signal = 9
+            mock_cfg.volume_spike_ratio = 2.0
+            mock_cfg.bb_period = 20
+            mock_cfg.bb_std_dev = 2.0
+            mock_sig.signal_config = mock_cfg
+
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/presets/conservative/apply")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert data["preset"] == "conservative"
+
+    def test_apply_strategy_preset_invalid(self, client):
+        """Test /api/presets/{preset_name}/apply with invalid preset."""
+        resp = client.post("/api/presets/nonexistent/apply")
+        assert resp.status_code == 404
+        data = resp.json()
+        assert "detail" in data
+        assert "nonexistent" in data["detail"]
+
+
+class TestSignalConfigEndpoints:
+    def test_get_signal_config(self, client):
+        """Test GET /api/config/signal returns current config."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            resp = client.get("/api/config/signal")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "rsi_period" in data
+            assert "rsi_oversold" in data
+            assert "rsi_overbought" in data
+            assert "macd_fast" in data
+            assert "macd_slow" in data
+
+    def test_update_signal_config_valid(self, client):
+        """Test POST /api/config/signal with valid values."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": 14,
+                "volume_spike_ratio": 1.5,
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert mock_sig.signal_config.rsi_period == 14
+            assert mock_sig.signal_config.volume_spike_ratio == 1.5
+
+    def test_update_signal_config_rsi_oversold_gte_overbought(self, client):
+        """Test signal config validation: rsi_oversold must be < rsi_overbought."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            # Try to set oversold >= overbought
+            resp = client.post("/api/config/signal", json={
+                "rsi_oversold": 70,
+                "rsi_overbought": 30,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("rsi_oversold must be less than rsi_overbought" in err for err in data["errors"])
+
+    def test_update_signal_config_macd_fast_gte_slow(self, client):
+        """Test signal config validation: macd_fast must be < macd_slow."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            # Try to set fast >= slow
+            resp = client.post("/api/config/signal", json={
+                "macd_fast": 26,
+                "macd_slow": 12,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("macd_fast must be less than macd_slow" in err for err in data["errors"])
+
+    def test_update_signal_config_rsi_period_too_small(self, client):
+        """Test signal config validation: rsi_period must be >= 2."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            resp = client.post("/api/config/signal", json={
+                "rsi_period": 1,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("rsi_period must be at least 2" in err for err in data["errors"])
+
+    def test_update_signal_config_partial_rsi_oversold(self, client):
+        """Test signal config validation with only one RSI value updated."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            # Set overbought to a low value
+            mock_config.rsi_overbought = 50
+
+            # Try to set oversold to a higher value
+            resp = client.post("/api/config/signal", json={
+                "rsi_oversold": 60,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("rsi_oversold must be less than rsi_overbought" in err for err in data["errors"])
+
+    def test_update_signal_config_partial_macd_fast(self, client):
+        """Test signal config validation with only one MACD value updated."""
+        with patch("app.main.signal_engine") as mock_sig:
+            from app.engines.signal_engine import SignalConfig
+            mock_config = SignalConfig()
+            mock_sig.signal_config = mock_config
+
+            # Set slow to a low value
+            mock_config.macd_slow = 10
+
+            # Try to set fast to a higher value
+            resp = client.post("/api/config/signal", json={
+                "macd_fast": 26,
+            })
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "errors" in data
+            assert any("macd_fast must be less than macd_slow" in err for err in data["errors"])

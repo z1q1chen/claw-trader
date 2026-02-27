@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import time
 from typing import Any
 
 import aiosqlite
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -39,6 +42,16 @@ def paginated_response(data: list, total: int, limit: int, offset: int) -> dict:
         "offset": offset,
         "has_more": offset + limit < total,
     }
+
+
+def _to_csv(rows: list[dict], columns: list[str]) -> str:
+    """Convert list of dicts to CSV string."""
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return output.getvalue()
 
 
 # --- Pydantic models ---
@@ -665,6 +678,44 @@ async def update_signal_config(req: dict):
                     setattr(cfg, key, value)
             except (ValueError, TypeError) as e:
                 errors.append(f"Invalid value for {key}: {e}")
+
+    # Cross-field validation (only if no type errors already)
+    try:
+        if "rsi_oversold" in req and "rsi_overbought" in req:
+            rsi_oversold = float(req["rsi_oversold"])
+            rsi_overbought = float(req["rsi_overbought"])
+            if rsi_oversold >= rsi_overbought:
+                errors.append("rsi_oversold must be less than rsi_overbought")
+        elif "rsi_oversold" in req:
+            rsi_oversold = float(req["rsi_oversold"])
+            if rsi_oversold >= cfg.rsi_overbought:
+                errors.append("rsi_oversold must be less than rsi_overbought")
+        elif "rsi_overbought" in req:
+            rsi_overbought = float(req["rsi_overbought"])
+            if cfg.rsi_oversold >= rsi_overbought:
+                errors.append("rsi_oversold must be less than rsi_overbought")
+
+        if "macd_fast" in req and "macd_slow" in req:
+            macd_fast = int(req["macd_fast"])
+            macd_slow = int(req["macd_slow"])
+            if macd_fast >= macd_slow:
+                errors.append("macd_fast must be less than macd_slow")
+        elif "macd_fast" in req:
+            macd_fast = int(req["macd_fast"])
+            if macd_fast >= cfg.macd_slow:
+                errors.append("macd_fast must be less than macd_slow")
+        elif "macd_slow" in req:
+            macd_slow = int(req["macd_slow"])
+            if cfg.macd_fast >= macd_slow:
+                errors.append("macd_fast must be less than macd_slow")
+
+        if "rsi_period" in req:
+            rsi_period = int(req["rsi_period"])
+            if rsi_period < 2:
+                errors.append("rsi_period must be at least 2")
+    except (ValueError, TypeError):
+        pass  # Type errors already captured in the loop above
+
     if errors:
         return JSONResponse(status_code=400, content={"errors": errors})
     return {"status": "ok"}
@@ -764,7 +815,124 @@ async def get_performance_summary():
     }
 
 
+# --- Data Export ---
+
+@router.get("/api/export/trades")
+async def export_trades(format: str = "csv"):
+    """Export filled orders as CSV or JSON."""
+    trades = await get_trade_pnl_data()
+    if format == "json":
+        return trades
+    columns = ["id", "broker", "symbol", "side", "order_type", "quantity", "filled_price", "filled_quantity", "status", "created_at"]
+    csv_data = _to_csv(trades, columns)
+    return StreamingResponse(
+        io.BytesIO(csv_data.encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=trades.csv"},
+    )
+
+
+@router.get("/api/export/signals")
+async def export_signals(limit: int = 1000, format: str = "csv"):
+    """Export signals as CSV or JSON."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM signals ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        rows = await cursor.fetchall()
+    signals = [dict(r) for r in rows]
+    if format == "json":
+        return signals
+    columns = ["id", "symbol", "signal_type", "value", "metadata", "created_at"]
+    csv_data = _to_csv(signals, columns)
+    return StreamingResponse(
+        io.BytesIO(csv_data.encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=signals.csv"},
+    )
+
+
+@router.get("/api/export/decisions")
+async def export_decisions(limit: int = 1000, format: str = "csv"):
+    """Export trade decisions as CSV or JSON."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM trade_decisions ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        rows = await cursor.fetchall()
+    decisions = [dict(r) for r in rows]
+    if format == "json":
+        return decisions
+    columns = ["id", "strategy", "symbol", "side", "quantity", "price", "reasoning", "confidence", "risk_check_passed", "created_at"]
+    csv_data = _to_csv(decisions, columns)
+    return StreamingResponse(
+        io.BytesIO(csv_data.encode()),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=decisions.csv"},
+    )
+
+
+# --- Strategy Presets ---
+
+STRATEGY_PRESETS = {
+    "conservative": {
+        "description": "Low risk, fewer trades, wider thresholds",
+        "signal_config": {"rsi_period": 14, "rsi_oversold": 25, "rsi_overbought": 75, "macd_fast": 12, "macd_slow": 26, "macd_signal": 9, "volume_spike_ratio": 3.0, "bb_period": 20, "bb_std_dev": 2.5},
+        "position_sizing": {"method": "fixed_fractional", "portfolio_fraction": 0.01, "max_position_pct": 0.05},
+    },
+    "balanced": {
+        "description": "Moderate risk/reward balance",
+        "signal_config": {"rsi_period": 14, "rsi_oversold": 30, "rsi_overbought": 70, "macd_fast": 12, "macd_slow": 26, "macd_signal": 9, "volume_spike_ratio": 2.0, "bb_period": 20, "bb_std_dev": 2.0},
+        "position_sizing": {"method": "fixed_fractional", "portfolio_fraction": 0.02, "max_position_pct": 0.10},
+    },
+    "aggressive": {
+        "description": "Higher risk, more frequent trades, tighter thresholds",
+        "signal_config": {"rsi_period": 7, "rsi_oversold": 35, "rsi_overbought": 65, "macd_fast": 8, "macd_slow": 21, "macd_signal": 5, "volume_spike_ratio": 1.5, "bb_period": 15, "bb_std_dev": 1.5},
+        "position_sizing": {"method": "kelly", "kelly_win_rate": 0.55, "kelly_avg_win": 1.5, "kelly_avg_loss": 1.0, "max_position_pct": 0.15},
+    },
+}
+
+
+@router.get("/api/presets")
+async def get_strategy_presets():
+    """Get all available strategy presets."""
+    return STRATEGY_PRESETS
+
+
+@router.post("/api/presets/{preset_name}/apply")
+async def apply_strategy_preset(preset_name: str):
+    """Apply a strategy preset to signal and position sizing configs."""
+    if preset_name not in STRATEGY_PRESETS:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": f"Preset '{preset_name}' not found"})
+
+    preset = STRATEGY_PRESETS[preset_name]
+
+    from app.main import signal_engine, execution_engine
+
+    cfg = signal_engine.signal_config
+    for key, value in preset["signal_config"].items():
+        setattr(cfg, key, type(getattr(cfg, key))(value))
+
+    sizing_cfg = execution_engine._position_sizer.config
+    for key, value in preset["position_sizing"].items():
+        if hasattr(sizing_cfg, key):
+            setattr(sizing_cfg, key, type(getattr(sizing_cfg, key))(value))
+
+    return {"status": "ok", "preset": preset_name}
+
+
 # --- System ---
+
+@router.post("/api/auth/generate-key")
+async def generate_new_api_key():
+    """Generate a new API key (only works when auth is disabled or already authenticated)."""
+    from app.core.auth import generate_api_key
+    key = generate_api_key()
+    return {"api_key": key, "note": "Set CT_API_SECRET_KEY to this value and CT_AUTH_ENABLED=true to enable authentication"}
+
 
 @router.get("/api/health")
 async def health():

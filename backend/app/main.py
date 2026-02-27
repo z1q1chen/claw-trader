@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config, get_stale_orders, update_order_status, get_expired_orders
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
-from app.core.middleware import RateLimitMiddleware
+from app.core.middleware import RateLimitMiddleware, AuthMiddleware
 from app.engines.signal_engine import SignalEngine
 from app.engines.llm_brain import LLMBrain
 from app.engines.risk_engine import RiskEngine
@@ -83,32 +83,33 @@ async def periodic_portfolio_sync() -> None:
     """Periodically sync broker positions and persist risk snapshots."""
     while True:
         try:
-            for broker_name, broker in execution_engine._brokers.items():
-                positions = await broker.get_positions()
-                exposure_map: dict[str, float] = {}
-                for symbol, pos_data in positions.items():
-                    exposure = abs(pos_data.get("quantity", 0) * pos_data.get("avg_cost", 0))
-                    exposure_map[symbol] = exposure
-                    await upsert_position(
-                        broker=broker_name,
-                        symbol=symbol,
-                        quantity=pos_data.get("quantity", 0),
-                        avg_entry_price=pos_data.get("avg_cost", 0),
-                        current_price=pos_data.get("market_value", 0) / max(pos_data.get("quantity", 1), 0.01),
-                        unrealized_pnl=pos_data.get("unrealized_pnl", 0),
-                        realized_pnl=pos_data.get("realized_pnl", 0),
-                    )
+            async with execution_engine._portfolio_lock:
+                for broker_name, broker in execution_engine._brokers.items():
+                    positions = await broker.get_positions()
+                    exposure_map: dict[str, float] = {}
+                    for symbol, pos_data in positions.items():
+                        exposure = abs(pos_data.get("quantity", 0) * pos_data.get("avg_cost", 0))
+                        exposure_map[symbol] = exposure
+                        await upsert_position(
+                            broker=broker_name,
+                            symbol=symbol,
+                            quantity=pos_data.get("quantity", 0),
+                            avg_entry_price=pos_data.get("avg_cost", 0),
+                            current_price=pos_data.get("market_value", 0) / max(pos_data.get("quantity", 1), 0.01),
+                            unrealized_pnl=pos_data.get("unrealized_pnl", 0),
+                            realized_pnl=pos_data.get("realized_pnl", 0),
+                        )
 
-                balance = await broker.get_balance()
-                daily_pnl = balance.get("UnrealizedPnL", 0) + balance.get("RealizedPnL", 0)
-                risk_engine.update_portfolio(exposure_map, daily_pnl)
-                llm_brain.set_portfolio_context(exposure_map, daily_pnl, sum(exposure_map.values()))
+                    balance = await broker.get_balance()
+                    daily_pnl = balance.get("UnrealizedPnL", 0) + balance.get("RealizedPnL", 0)
+                    risk_engine.update_portfolio(exposure_map, daily_pnl)
+                    llm_brain.set_portfolio_context(exposure_map, daily_pnl, sum(exposure_map.values()))
 
-                # Track returns for VaR calculation
-                total_exposure = sum(exposure_map.values())
-                if total_exposure > 0 and daily_pnl != 0:
-                    daily_return_pct = daily_pnl / total_exposure * 100
-                    risk_engine.add_return(daily_return_pct)
+                    # Track returns for VaR calculation
+                    total_exposure = sum(exposure_map.values())
+                    if total_exposure > 0 and daily_pnl != 0:
+                        daily_return_pct = daily_pnl / total_exposure * 100
+                        risk_engine.add_return(daily_return_pct)
 
             snapshot = risk_engine.get_risk_snapshot()
             await save_risk_snapshot(
@@ -313,6 +314,7 @@ app.add_middleware(
 )
 
 app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_rpm)
+app.add_middleware(AuthMiddleware)
 
 app.include_router(router)
 

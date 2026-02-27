@@ -689,3 +689,60 @@ async def test_execute_trade_retries_on_transient_failure() -> None:
     assert result.success is True
     assert result.broker_order_id == "RETRY-001"
     assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_positions_thread_safe(execution_engine: ExecutionEngine) -> None:
+    """Test that sync_positions acquires the portfolio lock."""
+    broker = FakeBrokerAdapter(positions={
+        "AAPL": {
+            "quantity": 10.0,
+            "avg_cost": 150.0,
+            "market_value": 1500.0,
+            "unrealized_pnl": 0.0,
+            "realized_pnl": 0.0,
+        }
+    })
+    execution_engine.register_broker("test", broker, default=True)
+
+    # Call sync_positions
+    result = await execution_engine.sync_positions()
+
+    # Verify result contains positions from all brokers
+    assert "test" in result
+    assert "AAPL" in result["test"]
+    assert result["test"]["AAPL"]["quantity"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_get_all_positions_thread_safe(execution_engine: ExecutionEngine) -> None:
+    """Test that get_all_positions acquires the portfolio lock."""
+    broker1 = FakeBrokerAdapter(positions={
+        "AAPL": {
+            "quantity": 10.0,
+            "avg_cost": 150.0,
+            "market_value": 1500.0,
+            "unrealized_pnl": 0.0,
+            "realized_pnl": 0.0,
+        }
+    })
+    broker2 = FakeBrokerAdapter(positions={
+        "MSFT": {
+            "quantity": 5.0,
+            "avg_cost": 300.0,
+            "market_value": 1500.0,
+            "unrealized_pnl": 0.0,
+            "realized_pnl": 0.0,
+        }
+    })
+
+    execution_engine.register_broker("broker1", broker1)
+    execution_engine.register_broker("broker2", broker2)
+
+    result = await execution_engine.get_all_positions()
+
+    # Verify result contains positions from both brokers
+    assert "broker1" in result
+    assert "broker2" in result
+    assert "AAPL" in result["broker1"]
+    assert "MSFT" in result["broker2"]

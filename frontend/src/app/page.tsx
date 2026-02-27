@@ -15,6 +15,7 @@ import type {
   PolymarketMarket,
   PerformanceSummary,
   SignalConfig,
+  PositionSizingConfig,
 } from "@/lib/types";
 
 interface EventLogEntry {
@@ -107,10 +108,22 @@ export default function Dashboard() {
   const [orderPage, setOrderPage] = useState(0);
   const [orderTotal, setOrderTotal] = useState(0);
   const ORDER_PAGE_SIZE = 20;
+  const [isLoading, setIsLoading] = useState(true);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [positionSizingConfig, setPositionSizingConfig] = useState<PositionSizingConfig>({
+    method: 'fixed_fractional',
+    fixed_quantity: 10,
+    portfolio_fraction: 0.02,
+    kelly_win_rate: 0.55,
+    kelly_avg_win: 1.5,
+    kelly_avg_loss: 1.0,
+    max_position_pct: 0.10,
+  });
+  const [positionSizingStatus, setPositionSizingStatus] = useState<string | null>(null);
 
   const refreshData = useCallback(async () => {
     try {
-      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun, sigCfg] = await Promise.all([
+      const [h, cfg, usage, dec, ord, pos, risk, rc, sig, brok, st, perf, dryRun, sigCfg, posSizingCfg] = await Promise.all([
         api.getHealth().catch(() => ({ status: "error" })),
         api.getLLMConfig().catch(() => null),
         api.getUsageSummary().catch(() => []),
@@ -125,6 +138,7 @@ export default function Dashboard() {
         api.getPerformanceSummary().catch(() => null),
         api.getDryRunStatus().catch(() => ({ enabled: false })),
         api.getSignalConfig().catch(() => null),
+        api.getPositionSizingConfig().catch(() => null),
       ]);
 
       setHealth(h.status === "ok" ? "connected" : "error");
@@ -142,9 +156,12 @@ export default function Dashboard() {
       if (perf) setPerformanceSummary(perf);
       setDryRunMode(dryRun.enabled);
       if (sigCfg) setSignalConfig(sigCfg);
+      if (posSizingCfg) setPositionSizingConfig(posSizingCfg);
       setKillSwitch(!!risk.kill_switch_active);
     } catch {
       setHealth("error");
+    } finally {
+      setIsLoading(false);
     }
   }, [orderPage]);
 
@@ -181,6 +198,13 @@ export default function Dashboard() {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('claw-trader-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   const saveLLMConfig = async () => {
     setLlmStatus(null);
@@ -234,6 +258,17 @@ export default function Dashboard() {
       refreshData();
     } catch (e: any) {
       setSignalConfigStatus(`Error: ${e.message}`);
+    }
+  };
+
+  const savePositionSizingConfig = async () => {
+    setPositionSizingStatus(null);
+    try {
+      await api.updatePositionSizingConfig(positionSizingConfig);
+      setToast({ message: "Position sizing configuration saved", type: "success" });
+      refreshData();
+    } catch (e: any) {
+      setToast({ message: `Error: ${e.message}`, type: "error" });
     }
   };
 
@@ -328,19 +363,36 @@ export default function Dashboard() {
 
   return (
     <>
-      {dryRunMode && (
-        <div style={{
-          background: '#f59e0b',
-          color: '#000',
-          textAlign: 'center',
-          padding: '8px',
-          fontWeight: 'bold',
-          fontSize: '14px',
-        }}>
-          DRY RUN MODE - Simulated trades only, no real money at risk
+      {isLoading && (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          Loading dashboard...
         </div>
       )}
-      <div className="header">
+      {!isLoading && (
+        <>
+          {dryRunMode && (
+            <div style={{
+              background: '#f59e0b',
+              color: '#000',
+              textAlign: 'center',
+              padding: '8px',
+              fontWeight: 'bold',
+              fontSize: '14px',
+            }}>
+              DRY RUN MODE - Simulated trades only, no real money at risk
+            </div>
+          )}
+          {toast && (
+            <div style={{
+              position: 'fixed', top: 20, right: 20, zIndex: 1000,
+              padding: '12px 20px', borderRadius: 8,
+              background: toast.type === 'success' ? '#22c55e' : '#ef4444',
+              color: '#fff', fontWeight: 500, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            }}>
+              {toast.message}
+            </div>
+          )}
+          <div className="header">
         <h1>Claw Trader</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <span>
@@ -732,6 +784,29 @@ export default function Dashboard() {
         <div className="card">
           <h2>Signal Detection Config</h2>
 
+          <div className="form-row">
+            <label>Strategy Presets</label>
+            <select
+              className="select"
+              onChange={async (e) => {
+                if (e.target.value) {
+                  try {
+                    await api.applyStrategyPreset(e.target.value);
+                    setToast({ message: `Applied ${e.target.value} preset`, type: "success" });
+                    refreshData();
+                  } catch (err: any) {
+                    setToast({ message: `Error: ${err.message}`, type: "error" });
+                  }
+                }
+              }}
+            >
+              <option value="">Load Preset...</option>
+              <option value="conservative">Conservative</option>
+              <option value="balanced">Balanced</option>
+              <option value="aggressive">Aggressive</option>
+            </select>
+          </div>
+
           <h3 style={{ fontSize: 13, marginTop: 12, marginBottom: 8, color: "var(--text-muted)" }}>RSI Parameters</h3>
           <div className="form-row">
             <label>RSI Period</label>
@@ -860,9 +935,173 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* Position Sizing Config */}
+        <div className="card">
+          <h2>Position Sizing</h2>
+          <div className="form-row">
+            <label>Sizing Method</label>
+            <div style={{ display: "flex", gap: 12 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  type="radio"
+                  checked={positionSizingConfig.method === 'fixed'}
+                  onChange={() => setPositionSizingConfig({ ...positionSizingConfig, method: 'fixed' })}
+                />
+                Fixed
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  type="radio"
+                  checked={positionSizingConfig.method === 'fixed_fractional'}
+                  onChange={() => setPositionSizingConfig({ ...positionSizingConfig, method: 'fixed_fractional' })}
+                />
+                Fixed Fractional
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <input
+                  type="radio"
+                  checked={positionSizingConfig.method === 'kelly'}
+                  onChange={() => setPositionSizingConfig({ ...positionSizingConfig, method: 'kelly' })}
+                />
+                Kelly Criterion
+              </label>
+            </div>
+          </div>
+
+          {positionSizingConfig.method === 'fixed' && (
+            <>
+              <div className="form-row">
+                <label>Fixed Quantity</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.1"
+                  value={positionSizingConfig.fixed_quantity || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, fixed_quantity: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                Trade a fixed quantity for every signal.
+              </p>
+            </>
+          )}
+
+          {positionSizingConfig.method === 'fixed_fractional' && (
+            <>
+              <div className="form-row">
+                <label>Portfolio Fraction (%)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  value={positionSizingConfig.portfolio_fraction * 100 || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, portfolio_fraction: parseFloat(e.target.value) / 100 || 0 })
+                  }
+                />
+              </div>
+              <div className="form-row">
+                <label>Max Position (% of portfolio)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.1"
+                  value={positionSizingConfig.max_position_pct * 100 || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, max_position_pct: parseFloat(e.target.value) / 100 || 0 })
+                  }
+                />
+              </div>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                Risk a fixed fraction of portfolio on each trade, capped by max position.
+              </p>
+            </>
+          )}
+
+          {positionSizingConfig.method === 'kelly' && (
+            <>
+              <div className="form-row">
+                <label>Win Rate (0-1)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={positionSizingConfig.kelly_win_rate || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, kelly_win_rate: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div className="form-row">
+                <label>Avg Win (ratio)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.1"
+                  value={positionSizingConfig.kelly_avg_win || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, kelly_avg_win: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div className="form-row">
+                <label>Avg Loss (ratio)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.1"
+                  value={positionSizingConfig.kelly_avg_loss || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, kelly_avg_loss: parseFloat(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div className="form-row">
+                <label>Max Position (% of portfolio)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.1"
+                  value={positionSizingConfig.max_position_pct * 100 || ""}
+                  onChange={(e) =>
+                    setPositionSizingConfig({ ...positionSizingConfig, max_position_pct: parseFloat(e.target.value) / 100 || 0 })
+                  }
+                />
+              </div>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                Kelly criterion sizing optimizes for long-term growth based on win rate and payoff ratios.
+              </p>
+            </>
+          )}
+
+          <button className="btn" onClick={savePositionSizingConfig} style={{ marginTop: 12 }}>
+            Save Configuration
+          </button>
+          {positionSizingStatus && (
+            <p style={{ marginTop: 8, fontSize: 12, color: positionSizingStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
+              {positionSizingStatus}
+            </p>
+          )}
+        </div>
+
         {/* Signals */}
         <div className="card dashboard-full">
           <h2>Recent Signals</h2>
+          {signals.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                className="btn"
+                onClick={() => window.open(`/api/export/signals?format=csv`, '_blank')}
+                style={{ fontSize: 12, padding: "4px 12px" }}
+              >
+                Export CSV
+              </button>
+            </div>
+          )}
           {signals.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No signals yet</p>
           ) : (
@@ -1181,6 +1420,17 @@ export default function Dashboard() {
         {/* Order History */}
         <div className="card dashboard-full">
           <h2>Order History</h2>
+          {orders.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                className="btn"
+                onClick={() => window.open(`/api/export/trades?format=csv`, '_blank')}
+                style={{ fontSize: 12, padding: "4px 12px" }}
+              >
+                Export CSV
+              </button>
+            </div>
+          )}
           {orders.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No orders yet</p>
           ) : (
@@ -1259,6 +1509,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </>
   );
 }

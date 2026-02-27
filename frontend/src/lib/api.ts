@@ -12,6 +12,7 @@ import {
   PolymarketMarket,
   PerformanceSummary,
   SignalConfig,
+  PositionSizingConfig,
 } from "./types";
 
 const API_BASE = "/api";
@@ -148,6 +149,21 @@ export const api = {
     fetchJSON<{ status: string }>("/config/signal", {
       method: "POST",
       body: JSON.stringify(config),
+    }),
+
+  // Position Sizing Config
+  getPositionSizingConfig: () => fetchJSON<PositionSizingConfig>("/config/position-sizing"),
+  updatePositionSizingConfig: (config: Partial<PositionSizingConfig>) =>
+    fetchJSON<{ status: string }>("/config/position-sizing", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+
+  // Strategy Presets
+  getStrategyPresets: () => fetchJSON<Record<string, any>>("/presets"),
+  applyStrategyPreset: (presetName: string) =>
+    fetchJSON<{ status: string; preset: string }>(`/presets/${presetName}/apply`, {
+      method: "POST",
     }),
 };
 

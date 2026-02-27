@@ -224,3 +224,49 @@ async def test_limit_price_takes_precedence_over_tracked_price(dryrun_broker: Dr
     assert result.filled_price is not None
     # For BUY with base_price=300 and slippage, should be around 300.3-300.9
     assert 299.0 < result.filled_price < 310.0
+
+
+@pytest.mark.asyncio
+async def test_unrealized_pnl_calculated_with_last_price(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that unrealized P&L is calculated using last known price, not avg_cost."""
+    # Buy 10 shares at 100
+    await dryrun_broker.place_order("STOCK", "BUY", 10.0, limit_price=100.0)
+
+    # Update last known price to 150 (price increased)
+    dryrun_broker.set_price("STOCK", 150.0)
+
+    positions = await dryrun_broker.get_positions()
+    pos = positions["STOCK"]
+
+    # avg_cost should still be around 100
+    assert 99.0 < pos["avg_cost"] < 101.0
+
+    # market_value should be calculated from current price (150)
+    assert pos["market_value"] == pytest.approx(1500.0, abs=1.0)
+
+    # unrealized_pnl should be (market_value - cost basis)
+    # = 1500 - 1000 = 500
+    expected_pnl = pos["market_value"] - (pos["quantity"] * pos["avg_cost"])
+    assert pos["unrealized_pnl"] == pytest.approx(expected_pnl, abs=1.0)
+    assert pos["unrealized_pnl"] > 0  # Should be positive (profit)
+
+
+@pytest.mark.asyncio
+async def test_unrealized_pnl_negative_on_price_decline(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that unrealized P&L becomes negative when price declines."""
+    # Buy 10 shares at 100
+    await dryrun_broker.place_order("STOCK", "BUY", 10.0, limit_price=100.0)
+
+    # Update price to 80 (price decreased)
+    dryrun_broker.set_price("STOCK", 80.0)
+
+    positions = await dryrun_broker.get_positions()
+    pos = positions["STOCK"]
+
+    # market_value should be 800
+    assert pos["market_value"] == pytest.approx(800.0, abs=1.0)
+
+    # unrealized_pnl should be negative
+    expected_pnl = pos["market_value"] - (pos["quantity"] * pos["avg_cost"])
+    assert pos["unrealized_pnl"] == pytest.approx(expected_pnl, abs=1.0)
+    assert pos["unrealized_pnl"] < 0  # Should be negative (loss)

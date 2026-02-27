@@ -137,3 +137,13 @@ export interface SignalConfig {
   bb_period: number;
   bb_std_dev: number;
 }
+
+export interface PositionSizingConfig {
+  method: 'fixed' | 'fixed_fractional' | 'kelly';
+  fixed_quantity: number;
+  portfolio_fraction: number;
+  kelly_win_rate: number;
+  kelly_avg_win: number;
+  kelly_avg_loss: number;
+  max_position_pct: number;
+}

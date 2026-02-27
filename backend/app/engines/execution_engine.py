@@ -210,3 +210,8 @@ class ExecutionEngine:
                     logger.warning(f"Failed to get positions from {broker_name}: {e}")
                     all_positions[broker_name] = {}
             return all_positions
+
+    async def sync_positions(self, broker_name: str | None = None) -> dict[str, dict[str, Any]]:
+        """Thread-safe position sync."""
+        # get_all_positions already acquires the lock, so we just call it directly
+        return await self.get_all_positions()

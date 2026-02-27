@@ -10,6 +10,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.logging import logger
 
 
+# Public paths that don't require authentication
+_PUBLIC_PATHS = {"/api/health", "/ws", "/docs", "/openapi.json", "/redoc"}
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Simple in-memory rate limiter.
 
@@ -60,4 +64,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         self._request_counts[client_ip].append(now)
+        return await call_next(request)
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """Authentication middleware that checks API key on protected endpoints."""
+
+    async def dispatch(self, request: Request, call_next):
+        from app.core.config import settings
+
+        # Skip auth if not enabled
+        if not settings.auth_enabled or not settings.api_secret_key:
+            return await call_next(request)
+
+        # Allow public paths
+        path = request.url.path
+        if path in _PUBLIC_PATHS or path.startswith("/docs"):
+            return await call_next(request)
+
+        # Allow OPTIONS for CORS preflight
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        from app.core.auth import verify_request
+        if not await verify_request(request):
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+
         return await call_next(request)

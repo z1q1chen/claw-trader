@@ -81,11 +81,13 @@ class DryRunBrokerAdapter(BrokerAdapter):
     async def get_positions(self) -> dict[str, dict[str, Any]]:
         result = {}
         for symbol, pos in self._positions.items():
+            current_price = self._last_prices.get(symbol, pos["avg_cost"])
+            market_value = pos["quantity"] * current_price
             result[symbol] = {
                 "quantity": pos["quantity"],
                 "avg_cost": pos["avg_cost"],
-                "market_value": pos["quantity"] * pos["avg_cost"],
-                "unrealized_pnl": 0,
+                "market_value": market_value,
+                "unrealized_pnl": market_value - (pos["quantity"] * pos["avg_cost"]),
                 "realized_pnl": 0,
             }
         return result
