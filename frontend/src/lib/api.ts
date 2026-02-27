@@ -20,9 +20,20 @@ import {
 
 const API_BASE = "/api";
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (typeof window !== "undefined") {
+    const apiKey = localStorage.getItem("claw-trader-api-key");
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+  }
+  return headers;
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     ...options,
   });
   if (!res.ok) {
@@ -41,6 +52,18 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // API Key Management
+  setApiKey: (key: string) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("claw-trader-api-key", key);
+    }
+  },
+  clearApiKey: () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("claw-trader-api-key");
+    }
+  },
+
   // LLM Config
   getLLMConfig: () => fetchJSON<LLMConfig>("/llm/config"),
   updateLLMConfig: (config: LLMConfig) =>

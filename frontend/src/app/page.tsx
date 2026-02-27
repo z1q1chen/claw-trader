@@ -129,6 +129,9 @@ export default function Dashboard() {
   const [journalPage, setJournalPage] = useState(0);
   const [journalTotal, setJournalTotal] = useState(0);
   const JOURNAL_PAGE_SIZE = 50;
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [showApiKeySettings, setShowApiKeySettings] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
 
   const refreshData = useCallback(async () => {
     try {
@@ -212,6 +215,13 @@ export default function Dashboard() {
     document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('claw-trader-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedKey = localStorage.getItem('claw-trader-api-key');
+      setHasApiKey(!!savedKey);
+    }
+  }, []);
 
   useEffect(() => {
     if (toast) {
@@ -385,6 +395,25 @@ export default function Dashboard() {
     }
   };
 
+  const handleSaveApiKey = () => {
+    if (apiKeyInput.trim()) {
+      api.setApiKey(apiKeyInput);
+      setHasApiKey(true);
+      setToast({ message: "API key saved", type: "success" });
+      setApiKeyInput("");
+      setShowApiKeySettings(false);
+    } else {
+      setToast({ message: "API key cannot be empty", type: "error" });
+    }
+  };
+
+  const handleClearApiKey = () => {
+    api.clearApiKey();
+    setHasApiKey(false);
+    setToast({ message: "API key cleared", type: "success" });
+    setShowApiKeySettings(false);
+  };
+
   const loadTrendingMarkets = async () => {
     setMarketsLoading(true);
     try {
@@ -458,6 +487,13 @@ export default function Dashboard() {
             {wsConnected ? "Live" : "Polling"}
           </span>
           <button
+            onClick={() => setShowApiKeySettings(!showApiKeySettings)}
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: 'var(--text)', fontSize: 12 }}
+            title={hasApiKey ? "API Key configured" : "No API Key"}
+          >
+            {hasApiKey ? "🔒" : "🔓"} API Key
+          </button>
+          <button
             onClick={() => setDarkMode(!darkMode)}
             style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: 'var(--text)' }}
           >
@@ -471,6 +507,41 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      {showApiKeySettings && (
+        <div style={{
+          background: 'var(--bg-secondary)',
+          padding: '16px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex', gap: '12px', alignItems: 'center'
+        }}>
+          <div style={{ flex: 1 }}>
+            <input
+              className="input"
+              type="password"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              placeholder="Enter API key..."
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveApiKey()}
+            />
+          </div>
+          <button className="btn" onClick={handleSaveApiKey} style={{ whiteSpace: 'nowrap' }}>
+            Save
+          </button>
+          {hasApiKey && (
+            <button className="btn" onClick={handleClearApiKey} style={{ background: '#ef4444', whiteSpace: 'nowrap' }}>
+              Clear
+            </button>
+          )}
+          <button
+            className="btn"
+            onClick={() => setShowApiKeySettings(false)}
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text)', whiteSpace: 'nowrap' }}
+          >
+            Close
+          </button>
+        </div>
+      )}
 
       <div className="dashboard">
         {/* LLM Configuration */}

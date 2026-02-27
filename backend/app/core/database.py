@@ -61,6 +61,7 @@ MIGRATIONS = [
         FOREIGN KEY (order_id) REFERENCES orders(id)
     )
 """),
+    (5, "Add max_position_concentration_pct to risk_config", "ALTER TABLE risk_config ADD COLUMN max_position_concentration_pct REAL DEFAULT 20.0"),
 ]
 
 
@@ -385,6 +386,7 @@ async def save_risk_config(
     max_portfolio_exposure_usd: float,
     max_single_trade_usd: float,
     max_drawdown_pct: float,
+    max_position_concentration_pct: float | None = None,
 ) -> None:
     async with _write_lock:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -394,10 +396,11 @@ async def save_risk_config(
                 await db.execute(
                     """INSERT INTO risk_config
                        (max_position_usd, max_daily_loss_usd, max_portfolio_exposure_usd,
-                        max_single_trade_usd, max_drawdown_pct)
-                       VALUES (?, ?, ?, ?, ?)""",
+                        max_single_trade_usd, max_drawdown_pct, max_position_concentration_pct)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
                     (max_position_usd, max_daily_loss_usd, max_portfolio_exposure_usd,
-                     max_single_trade_usd, max_drawdown_pct),
+                     max_single_trade_usd, max_drawdown_pct,
+                     max_position_concentration_pct or 20.0),
                 )
                 await db.execute("COMMIT")
             except Exception as e:

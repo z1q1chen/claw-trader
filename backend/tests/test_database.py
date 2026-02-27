@@ -293,8 +293,8 @@ async def test_run_migrations_idempotent(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should have 4 migrations total (v1, v2, v3, v4)
-    assert result[0] == 4
+    # Should have 5 migrations total (v1, v2, v3, v4, v5)
+    assert result[0] == 5
 
 
 @pytest.mark.asyncio
@@ -305,8 +305,8 @@ async def test_run_migrations_tracks_version(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should track v1, v2, v3, v4
-    assert result[0] == 4
+    # Should track v1, v2, v3, v4, v5
+    assert result[0] == 5
 
 
 @pytest.mark.asyncio

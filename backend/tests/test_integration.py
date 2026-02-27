@@ -114,3 +114,47 @@ class TestFullPipeline:
 
         engine._last_signal_time[f"AAPL:rsi_oversold"] = float('inf')
         assert engine._should_emit("AAPL", "rsi_oversold") is False
+
+    @pytest.mark.asyncio
+    async def test_handle_signal_skips_zero_price(self):
+        """Test that handle_signal skips execution when price is 0 or missing."""
+        from app.main import handle_signal, llm_brain, execution_engine
+
+        mock_llm = AsyncMock()
+        mock_exec = AsyncMock()
+
+        with patch("app.main.llm_brain", mock_llm), \
+             patch("app.main.execution_engine", mock_exec):
+
+            # Test with zero price
+            event = Event(type="signal", data={"symbol": "AAPL", "price": 0, "signal_type": "test"})
+            await handle_signal(event)
+            mock_llm.decide.assert_not_called()
+
+            # Test with missing price
+            event = Event(type="signal", data={"symbol": "MSFT", "signal_type": "test"})
+            await handle_signal(event)
+            mock_llm.decide.assert_not_called()
+
+            # Test with negative price
+            event = Event(type="signal", data={"symbol": "GOOGL", "price": -100, "signal_type": "test"})
+            await handle_signal(event)
+            mock_llm.decide.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_signal_catches_llm_errors(self):
+        """Test that handle_signal catches LLM errors and doesn't lose signal."""
+        from app.main import handle_signal, llm_brain, execution_engine
+
+        mock_llm = AsyncMock()
+        mock_llm.decide.side_effect = Exception("LLM error")
+        mock_exec = AsyncMock()
+
+        with patch("app.main.llm_brain", mock_llm), \
+             patch("app.main.execution_engine", mock_exec):
+
+            event = Event(type="signal", data={"symbol": "AAPL", "price": 150.0, "signal_type": "test"})
+            await handle_signal(event)
+
+            mock_llm.decide.assert_called_once()
+            mock_exec.execute_trade.assert_not_called()

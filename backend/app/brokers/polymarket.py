@@ -42,6 +42,17 @@ class PolymarketAdapter(BrokerAdapter):
             self._web3 = Web3(Web3.HTTPProvider(self._rpc_url))
         return self._web3
 
+    async def disconnect(self) -> None:
+        """Close HTTP client connection."""
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
+    def _ensure_http(self) -> None:
+        """Raise error if HTTP client has been disconnected."""
+        if self._http is None:
+            raise RuntimeError("Polymarket adapter has been disconnected")
+
     def _sign_order(self, order_data: dict) -> dict:
         """Add HMAC signature to order request."""
         if not self._private_key:
@@ -58,6 +69,7 @@ class PolymarketAdapter(BrokerAdapter):
         return order_data
 
     async def get_trending_markets(self, limit: int = 10) -> list[dict]:
+        self._ensure_http()
         resp = await self._http.get(
             f"{GAMMA_API_BASE}/markets",
             params={"limit": limit, "order": "volume24hr", "ascending": "false", "active": "true"},
@@ -66,6 +78,7 @@ class PolymarketAdapter(BrokerAdapter):
         return resp.json()
 
     async def search_markets(self, query: str, limit: int = 10) -> list[dict]:
+        self._ensure_http()
         resp = await self._http.get(
             f"{GAMMA_API_BASE}/markets",
             params={"limit": limit, "tag": query, "active": "true"},
@@ -74,6 +87,7 @@ class PolymarketAdapter(BrokerAdapter):
         return resp.json()
 
     async def get_market(self, condition_id: str) -> dict:
+        self._ensure_http()
         resp = await self._http.get(f"{GAMMA_API_BASE}/markets/{condition_id}")
         resp.raise_for_status()
         return resp.json()
@@ -109,6 +123,7 @@ class PolymarketAdapter(BrokerAdapter):
         quantity: amount to trade
         limit_price: price for limit orders
         """
+        self._ensure_http()
         if not self._api_key:
             return OrderResult(
                 success=False,
@@ -191,6 +206,7 @@ class PolymarketAdapter(BrokerAdapter):
 
     async def get_positions(self) -> dict[str, dict[str, Any]]:
         """Query CLOB API for user positions."""
+        self._ensure_http()
         if not self._api_key:
             return {}
 
@@ -284,6 +300,7 @@ class PolymarketAdapter(BrokerAdapter):
             return 0.0
 
     async def get_order_history(self, limit: int = 50) -> list[dict[str, Any]]:
+        self._ensure_http()
         if not self._api_key:
             return []
         try:
@@ -300,6 +317,7 @@ class PolymarketAdapter(BrokerAdapter):
             return []
 
     async def cancel_order(self, order_id: str) -> bool:
+        self._ensure_http()
         if not self._api_key:
             return False
         try:

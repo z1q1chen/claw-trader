@@ -375,18 +375,40 @@ class LLMBrain:
                       "latency_ms": response.latency_ms}
             ))
 
-            self._last_call_success = True
-            self._last_call_error = None
-
             if decision.get("action") == "hold":
                 return None
 
+            quantity = float(decision.get("quantity", 0))
+            confidence = float(decision.get("confidence", 0))
+            symbol = decision.get("symbol", "").strip()
+
+            if quantity <= 0:
+                logger.warning(f"LLM output validation failed: quantity must be > 0, got {quantity}")
+                self._last_call_success = False
+                self._last_call_error = f"Invalid quantity: {quantity}"
+                return None
+
+            if not (0 <= confidence <= 1):
+                logger.warning(f"LLM output validation failed: confidence must be between 0 and 1, got {confidence}")
+                self._last_call_success = False
+                self._last_call_error = f"Invalid confidence: {confidence}"
+                return None
+
+            if not symbol:
+                logger.warning("LLM output validation failed: symbol must be non-empty")
+                self._last_call_success = False
+                self._last_call_error = "Invalid symbol: empty"
+                return None
+
+            self._last_call_success = True
+            self._last_call_error = None
+
             return TradeAction(
-                symbol=decision["symbol"],
+                symbol=symbol,
                 side=decision["action"],
-                quantity=float(decision.get("quantity", 0)),
+                quantity=quantity,
                 reasoning=decision.get("reasoning", ""),
-                confidence=float(decision.get("confidence", 0)),
+                confidence=confidence,
                 strategy="llm_signal_response",
                 order_type=decision.get("order_type", "MARKET"),
                 limit_price=decision.get("limit_price"),

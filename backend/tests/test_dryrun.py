@@ -281,6 +281,39 @@ async def test_unrealized_pnl_negative_on_price_decline(dryrun_broker: DryRunBro
 
 
 @pytest.mark.asyncio
+async def test_sell_more_than_owned_returns_failure(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that selling more than owned returns an error instead of allowing phantom shorts."""
+    # Buy 5 shares
+    await dryrun_broker.place_order("TSLA", "BUY", 5.0, limit_price=200.0)
+
+    positions = await dryrun_broker.get_positions()
+    assert positions["TSLA"]["quantity"] == 5.0
+
+    # Try to sell 10 shares (more than owned)
+    result = await dryrun_broker.place_order("TSLA", "SELL", 10.0, limit_price=200.0)
+
+    assert result.success is False
+    assert "Insufficient position" in result.error
+    assert "trying to sell 10" in result.error
+    assert "only have 5" in result.error
+
+    # Position should remain unchanged
+    positions = await dryrun_broker.get_positions()
+    assert positions["TSLA"]["quantity"] == 5.0
+    assert len(positions) == 1
+
+
+@pytest.mark.asyncio
+async def test_sell_nonexistent_position_returns_failure(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that selling a position that doesn't exist returns an error."""
+    # Try to sell a position that was never bought
+    result = await dryrun_broker.place_order("NONEXIST", "SELL", 10.0, limit_price=100.0)
+
+    assert result.success is False
+    assert "Insufficient position" in result.error
+
+
+@pytest.mark.asyncio
 async def test_state_persistence_save_and_load() -> None:
     """Test that broker state is persisted to JSON and can be restored."""
     # Clean up any existing state file

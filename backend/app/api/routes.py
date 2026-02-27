@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import ipaddress
 import json
 import time
+import urllib.parse
 from typing import Any
 
 import aiosqlite
@@ -130,6 +132,41 @@ def _mask_key(key: str) -> str:
     if not key or len(key) <= 4:
         return key
     return "•" * (len(key) - 4) + key[-4:]
+
+
+def _validate_webhook_url(url: str) -> list[str]:
+    """Validate webhook URL. Returns list of error strings if invalid."""
+    errors = []
+
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        errors.append("Invalid URL format")
+        return errors
+
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        errors.append("URL must start with http:// or https://")
+
+    hostname = parsed.hostname
+    if not hostname:
+        errors.append("URL must have a valid hostname")
+        return errors
+
+    try:
+        ip_obj = ipaddress.ip_address(hostname)
+        if isinstance(ip_obj, ipaddress.IPv4Address):
+            if (ip_obj.is_loopback or
+                ip_obj.is_private or
+                ip_obj.is_link_local):
+                errors.append(f"Webhook URL cannot use private/loopback IP: {hostname}")
+        elif isinstance(ip_obj, ipaddress.IPv6Address):
+            if ip_obj.is_loopback:
+                errors.append(f"Webhook URL cannot use loopback IP: {hostname}")
+    except ValueError:
+        pass
+
+    return errors
 
 
 @router.get("/api/llm/config")
@@ -376,6 +413,7 @@ async def update_risk_config(req: RiskConfigRequest):
         settings.max_portfolio_exposure_usd,
         settings.max_single_trade_usd,
         settings.max_drawdown_pct,
+        settings.max_position_concentration_pct,
     )
     return {"status": "ok"}
 
@@ -419,7 +457,7 @@ async def get_journal(limit: int = 50, offset: int = 0, symbol: str | None = Non
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
-    queue: asyncio.Queue = asyncio.Queue()  # Unbounded queue
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
     event_bus.register_ws_client(queue)
 
     try:
@@ -788,14 +826,74 @@ async def update_position_sizing_config(req: dict):
     from app.main import execution_engine
     cfg = execution_engine._position_sizer.config
     valid_methods = ("fixed", "fixed_fractional", "kelly")
+    errors = []
+
     if "method" in req and req["method"] in valid_methods:
         cfg.method = req["method"]
-    for key in ("fixed_quantity", "portfolio_fraction", "kelly_win_rate", "kelly_avg_win", "kelly_avg_loss", "max_position_pct"):
-        if key in req:
-            try:
-                setattr(cfg, key, float(req[key]))
-            except (ValueError, TypeError):
-                pass
+
+    if "max_position_pct" in req:
+        try:
+            val = float(req["max_position_pct"])
+            if val <= 0 or val > 1.0:
+                errors.append("max_position_pct must be between 0 (exclusive) and 1.0 (inclusive)")
+            else:
+                cfg.max_position_pct = val
+        except (ValueError, TypeError):
+            errors.append("max_position_pct must be a number")
+
+    if "kelly_avg_loss" in req:
+        try:
+            val = float(req["kelly_avg_loss"])
+            if val <= 0:
+                errors.append("kelly_avg_loss must be positive")
+            else:
+                cfg.kelly_avg_loss = val
+        except (ValueError, TypeError):
+            errors.append("kelly_avg_loss must be a number")
+
+    if "kelly_avg_win" in req:
+        try:
+            val = float(req["kelly_avg_win"])
+            if val <= 0:
+                errors.append("kelly_avg_win must be positive")
+            else:
+                cfg.kelly_avg_win = val
+        except (ValueError, TypeError):
+            errors.append("kelly_avg_win must be a number")
+
+    if "kelly_win_rate" in req:
+        try:
+            val = float(req["kelly_win_rate"])
+            if val < 0 or val > 1:
+                errors.append("kelly_win_rate must be between 0 and 1")
+            else:
+                cfg.kelly_win_rate = val
+        except (ValueError, TypeError):
+            errors.append("kelly_win_rate must be a number")
+
+    if "fixed_quantity" in req:
+        try:
+            val = float(req["fixed_quantity"])
+            if val <= 0:
+                errors.append("fixed_quantity must be positive")
+            else:
+                cfg.fixed_quantity = val
+        except (ValueError, TypeError):
+            errors.append("fixed_quantity must be a number")
+
+    if "portfolio_fraction" in req:
+        try:
+            val = float(req["portfolio_fraction"])
+            if val < 0 or val > 1:
+                errors.append("portfolio_fraction must be between 0 and 1")
+            else:
+                cfg.portfolio_fraction = val
+        except (ValueError, TypeError):
+            errors.append("portfolio_fraction must be a number")
+
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
     return {"status": "ok"}
 
 
@@ -992,10 +1090,19 @@ async def list_webhooks():
 async def create_webhook(req: dict):
     from app.core.webhooks import webhook_manager, Webhook
     import uuid
+
+    url = req.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=422, detail="URL is required")
+
+    errors = _validate_webhook_url(url)
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+
     webhook_id = str(uuid.uuid4())[:8]
     webhook = Webhook(
         id=webhook_id,
-        url=req["url"],
+        url=url,
         event_types=req.get("event_types", ["*"]),
         enabled=req.get("enabled", True),
     )

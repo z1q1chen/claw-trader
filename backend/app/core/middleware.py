@@ -64,7 +64,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         self._request_counts[client_ip].append(now)
-        return await call_next(request)
+        response = await call_next(request)
+
+        if len(self._request_counts) > 10000:
+            self._request_counts = {
+                ip: timestamps for ip, timestamps in self._request_counts.items()
+                if timestamps
+            }
+
+        return response
 
 
 class AuthMiddleware(BaseHTTPMiddleware):

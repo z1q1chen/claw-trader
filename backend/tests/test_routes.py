@@ -57,6 +57,7 @@ class TestRiskEndpoints:
             mock_settings.max_portfolio_exposure_usd = 50000.0
             mock_settings.max_single_trade_usd = 2000.0
             mock_settings.max_drawdown_pct = 10.0
+            mock_settings.max_position_concentration_pct = 20.0
 
             resp = client.get("/api/risk/config")
             assert resp.status_code == 200
@@ -66,6 +67,8 @@ class TestRiskEndpoints:
             assert "max_portfolio_exposure_usd" in data
             assert "max_single_trade_usd" in data
             assert "max_drawdown_pct" in data
+            assert "max_position_concentration_pct" in data
+            assert data["max_position_concentration_pct"] == 20.0
 
     def test_update_risk_config_valid(self, client):
         with patch("app.core.config.settings") as mock_settings, \
@@ -75,6 +78,7 @@ class TestRiskEndpoints:
             mock_settings.max_portfolio_exposure_usd = 50000.0
             mock_settings.max_single_trade_usd = 2000.0
             mock_settings.max_drawdown_pct = 10.0
+            mock_settings.max_position_concentration_pct = 20.0
 
             resp = client.post("/api/risk/config", json={
                 "max_single_trade_usd": 5000,
@@ -113,6 +117,26 @@ class TestRiskEndpoints:
             assert resp.status_code == 200
             data = resp.json()
             assert "total_exposure_usd" in data
+
+    def test_risk_config_roundtrip_with_concentration_pct(self, client):
+        """Test that max_position_concentration_pct persists through save/load cycle."""
+        with patch("app.core.config.settings") as mock_settings, \
+             patch("app.api.routes.save_risk_config", new_callable=AsyncMock) as mock_save:
+            mock_settings.max_position_usd = 10000.0
+            mock_settings.max_daily_loss_usd = 5000.0
+            mock_settings.max_portfolio_exposure_usd = 50000.0
+            mock_settings.max_single_trade_usd = 2000.0
+            mock_settings.max_drawdown_pct = 10.0
+            mock_settings.max_position_concentration_pct = 25.0
+
+            resp = client.post("/api/risk/config", json={
+                "max_position_concentration_pct": 25.0,
+            })
+            assert resp.status_code == 200
+
+            mock_save.assert_called_once()
+            call_args = mock_save.call_args
+            assert call_args[0][5] == 25.0  # max_position_concentration_pct is 6th arg
 
 
 class TestBrokerEndpoints:
@@ -1115,3 +1139,268 @@ class TestSignalConfigEndpoints:
             data = resp.json()
             assert "errors" in data
             assert any("macd_fast must be less than macd_slow" in err for err in data["errors"])
+
+
+class TestWebhookValidation:
+    """Test webhook URL validation."""
+
+    def test_create_webhook_with_private_ip_127(self, client):
+        """Test that webhook with loopback IP (127.0.0.1) returns 422."""
+        with patch("app.core.webhooks.webhook_manager.register"):
+            resp = client.post("/api/webhooks", json={
+                "url": "http://127.0.0.1:8000/webhook",
+                "event_types": ["*"]
+            })
+            assert resp.status_code == 422
+            data = resp.json()
+            assert "detail" in data
+            assert any("private" in str(d).lower() or "loopback" in str(d).lower() for d in (data["detail"] if isinstance(data["detail"], list) else [data["detail"]]))
+
+    def test_create_webhook_with_private_ip_10(self, client):
+        """Test that webhook with private IP (10.x) returns 422."""
+        with patch("app.core.webhooks.webhook_manager.register"):
+            resp = client.post("/api/webhooks", json={
+                "url": "http://10.0.0.1/webhook",
+                "event_types": ["*"]
+            })
+            assert resp.status_code == 422
+
+    def test_create_webhook_with_private_ip_192(self, client):
+        """Test that webhook with private IP (192.168.x) returns 422."""
+        with patch("app.core.webhooks.webhook_manager.register"):
+            resp = client.post("/api/webhooks", json={
+                "url": "http://192.168.1.1/webhook",
+                "event_types": ["*"]
+            })
+            assert resp.status_code == 422
+
+    def test_create_webhook_with_private_ip_172(self, client):
+        """Test that webhook with private IP (172.16-31.x) returns 422."""
+        with patch("app.core.webhooks.webhook_manager.register"):
+            resp = client.post("/api/webhooks", json={
+                "url": "http://172.16.0.1/webhook",
+                "event_types": ["*"]
+            })
+            assert resp.status_code == 422
+
+    def test_create_webhook_with_valid_https_url(self, client):
+        """Test that webhook with valid HTTPS URL succeeds."""
+        with patch("app.core.webhooks.webhook_manager.register") as mock_reg:
+            resp = client.post("/api/webhooks", json={
+                "url": "https://example.com/webhook",
+                "event_types": ["order_executed", "order_failed"]
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "created"
+            assert "id" in data
+            mock_reg.assert_called_once()
+
+    def test_create_webhook_with_valid_http_url(self, client):
+        """Test that webhook with valid HTTP URL (public domain) succeeds."""
+        with patch("app.core.webhooks.webhook_manager.register") as mock_reg:
+            resp = client.post("/api/webhooks", json={
+                "url": "http://example.com/webhook",
+                "event_types": ["*"]
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "created"
+            mock_reg.assert_called_once()
+
+    def test_create_webhook_without_scheme(self, client):
+        """Test that webhook without http/https scheme returns 422."""
+        resp = client.post("/api/webhooks", json={
+            "url": "example.com/webhook",
+            "event_types": ["*"]
+        })
+        assert resp.status_code == 422
+
+    def test_create_webhook_empty_url(self, client):
+        """Test that empty webhook URL returns 422."""
+        resp = client.post("/api/webhooks", json={
+            "url": "",
+            "event_types": ["*"]
+        })
+        assert resp.status_code == 422
+
+    def test_create_webhook_with_ipv6_loopback(self, client):
+        """Test that webhook with IPv6 loopback (::1) returns 422."""
+        resp = client.post("/api/webhooks", json={
+            "url": "http://[::1]/webhook",
+            "event_types": ["*"]
+        })
+        assert resp.status_code == 422
+
+
+class TestPositionSizingValidation:
+    """Test position sizing configuration validation."""
+
+    def test_update_position_sizing_max_position_pct_too_high(self, client):
+        """Test that max_position_pct > 1.0 returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "max_position_pct": 1.5
+            })
+            assert resp.status_code == 422
+            data = resp.json()
+            assert "detail" in data
+            errors = data["detail"] if isinstance(data["detail"], list) else [data["detail"]]
+            assert any("max_position_pct" in str(e) for e in errors)
+
+    def test_update_position_sizing_max_position_pct_zero(self, client):
+        """Test that max_position_pct = 0 returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "max_position_pct": 0
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_max_position_pct_negative(self, client):
+        """Test that negative max_position_pct returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "max_position_pct": -0.1
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_kelly_avg_loss_negative(self, client):
+        """Test that negative kelly_avg_loss returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "kelly_avg_loss": -1.0
+            })
+            assert resp.status_code == 422
+            data = resp.json()
+            errors = data["detail"] if isinstance(data["detail"], list) else [data["detail"]]
+            assert any("kelly_avg_loss" in str(e) for e in errors)
+
+    def test_update_position_sizing_kelly_avg_loss_zero(self, client):
+        """Test that zero kelly_avg_loss returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "kelly_avg_loss": 0
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_kelly_avg_win_negative(self, client):
+        """Test that negative kelly_avg_win returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "kelly_avg_win": -2.0
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_kelly_win_rate_out_of_range(self, client):
+        """Test that kelly_win_rate > 1 returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "kelly_win_rate": 1.5
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_kelly_win_rate_negative(self, client):
+        """Test that negative kelly_win_rate returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "kelly_win_rate": -0.1
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_fixed_quantity_negative(self, client):
+        """Test that negative fixed_quantity returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "fixed_quantity": -10.0
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_portfolio_fraction_too_high(self, client):
+        """Test that portfolio_fraction > 1 returns 422."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "portfolio_fraction": 1.5
+            })
+            assert resp.status_code == 422
+
+    def test_update_position_sizing_multiple_errors(self, client):
+        """Test that multiple validation errors are returned."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "kelly_avg_loss": -1.0,
+                "kelly_avg_win": 0,
+                "max_position_pct": 2.0
+            })
+            assert resp.status_code == 422
+            data = resp.json()
+            errors = data["detail"] if isinstance(data["detail"], list) else [data["detail"]]
+            assert len(errors) >= 3
+
+    def test_update_position_sizing_valid_values(self, client):
+        """Test that valid values are accepted."""
+        with patch("app.main.execution_engine") as mock_exec:
+            from app.engines.position_sizing import PositionSizer
+            mock_sizer = PositionSizer()
+            mock_exec._position_sizer = mock_sizer
+
+            resp = client.post("/api/config/position-sizing", json={
+                "method": "kelly",
+                "kelly_win_rate": 0.55,
+                "kelly_avg_win": 1.5,
+                "kelly_avg_loss": 1.0,
+                "max_position_pct": 0.10,
+                "fixed_quantity": 10.0,
+                "portfolio_fraction": 0.05
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert mock_exec._position_sizer.config.method == "kelly"
+            assert mock_exec._position_sizer.config.kelly_win_rate == 0.55
+            assert mock_exec._position_sizer.config.kelly_avg_win == 1.5
+            assert mock_exec._position_sizer.config.kelly_avg_loss == 1.0
+            assert mock_exec._position_sizer.config.max_position_pct == 0.10

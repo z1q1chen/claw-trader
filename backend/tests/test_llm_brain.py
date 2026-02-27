@@ -524,13 +524,51 @@ async def test_decide_publishes_event():
 
 @pytest.mark.asyncio
 async def test_decide_with_missing_optional_fields():
-    """Test decide() handles JSON with missing optional fields gracefully."""
+    """Test decide() rejects responses with missing required fields that fail validation."""
     brain = LLMBrain()
-    # Minimal response - missing some optional fields
+    # Minimal response - missing some required fields for validation
     response_content = json.dumps(
         {
             "action": "buy",
             "symbol": "FB",
+            # Missing quantity and confidence - will fail validation
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "FB",
+            "signal_type": "test",
+            "value": 30.0,
+            "price": 300.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            # Should be rejected because quantity defaults to 0.0 (invalid)
+            assert result is None
+            assert brain._last_call_success is False
+
+
+@pytest.mark.asyncio
+async def test_decide_with_valid_optional_fields_provided():
+    """Test decide() handles responses with all fields provided."""
+    brain = LLMBrain()
+    # Complete response with all fields
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "FB",
+            "quantity": 10.0,
+            "confidence": 0.85,
+            "reasoning": "Test reason",
         }
     )
     fake_provider = FakeLLMProvider(response_content)
@@ -554,9 +592,9 @@ async def test_decide_with_missing_optional_fields():
             assert result is not None
             assert result.symbol == "FB"
             assert result.side == "buy"
-            assert result.quantity == 0.0  # Uses default from .get()
-            assert result.confidence == 0.0  # Uses default from .get()
-            assert result.reasoning == ""  # Uses default from .get()
+            assert result.quantity == 10.0
+            assert result.confidence == 0.85
+            assert result.reasoning == "Test reason"
 
 
 @pytest.mark.asyncio
@@ -836,3 +874,295 @@ async def test_llm_semaphore_serializes_concurrent_calls():
             brain._last_call_time = 0
             first_result = await brain.decide(signal_event)
             assert first_result is not None
+
+
+# ============================================================================
+# LLMBrain Output Validation Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_decide_rejects_zero_quantity():
+    """Test that decide() rejects LLM response with quantity <= 0."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "AAPL",
+            "quantity": 0,  # Invalid: must be > 0
+            "confidence": 0.85,
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "AAPL",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            assert result is None
+            assert brain._last_call_success is False
+            assert "quantity" in brain._last_call_error
+
+
+@pytest.mark.asyncio
+async def test_decide_rejects_negative_quantity():
+    """Test that decide() rejects LLM response with negative quantity."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "MSFT",
+            "quantity": -10.0,  # Invalid: must be > 0
+            "confidence": 0.85,
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "MSFT",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            assert result is None
+            assert brain._last_call_success is False
+
+
+@pytest.mark.asyncio
+async def test_decide_rejects_confidence_below_zero():
+    """Test that decide() rejects confidence < 0."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "GOOGL",
+            "quantity": 10.0,
+            "confidence": -0.1,  # Invalid: must be 0-1
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "GOOGL",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            assert result is None
+            assert brain._last_call_success is False
+            assert "confidence" in brain._last_call_error
+
+
+@pytest.mark.asyncio
+async def test_decide_rejects_confidence_above_one():
+    """Test that decide() rejects confidence > 1."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "sell",
+            "symbol": "TSLA",
+            "quantity": 5.0,
+            "confidence": 1.5,  # Invalid: must be 0-1
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "TSLA",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            assert result is None
+            assert brain._last_call_success is False
+
+
+@pytest.mark.asyncio
+async def test_decide_rejects_empty_symbol():
+    """Test that decide() rejects empty or whitespace-only symbol."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "   ",  # Invalid: symbol must be non-empty after strip
+            "quantity": 10.0,
+            "confidence": 0.85,
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "AMZN",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            assert result is None
+            assert brain._last_call_success is False
+            assert "symbol" in brain._last_call_error
+
+
+@pytest.mark.asyncio
+async def test_decide_accepts_valid_bounds():
+    """Test that decide() accepts response with valid bounds (quantity, confidence, symbol)."""
+    brain = LLMBrain()
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "FB",
+            "quantity": 15.5,  # Valid: > 0
+            "confidence": 0.99,  # Valid: 0-1
+            "reasoning": "Test signal",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "FB",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            result = await brain.decide(signal_event)
+
+            assert result is not None
+            assert result.quantity == 15.5
+            assert result.confidence == 0.99
+            assert result.symbol == "FB"
+            assert brain._last_call_success is True
+            assert brain._last_call_error is None
+
+
+@pytest.mark.asyncio
+async def test_decide_boundary_values():
+    """Test decide() with boundary values for confidence (0.0 and 1.0)."""
+    brain = LLMBrain()
+
+    # Test confidence = 0.0 (valid boundary)
+    response_content = json.dumps(
+        {
+            "action": "buy",
+            "symbol": "LOW",
+            "quantity": 10.0,
+            "confidence": 0.0,  # Valid boundary
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "LOW",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            brain._last_call_time = 0  # Reset rate limiting
+            result = await brain.decide(signal_event)
+
+            assert result is not None
+            assert result.confidence == 0.0
+
+    # Test confidence = 1.0 (valid boundary)
+    response_content = json.dumps(
+        {
+            "action": "sell",
+            "symbol": "HIGH",
+            "quantity": 5.0,
+            "confidence": 1.0,  # Valid boundary
+            "reasoning": "Test",
+        }
+    )
+    fake_provider = FakeLLMProvider(response_content)
+    brain._provider = fake_provider
+
+    signal_event = Event(
+        type="signal",
+        data={
+            "symbol": "HIGH",
+            "signal_type": "test",
+            "value": 25.0,
+            "price": 150.0,
+            "metadata": {},
+        },
+    )
+
+    with patch("app.engines.llm_brain.log_api_usage", new_callable=AsyncMock):
+        with patch("app.engines.llm_brain.event_bus.publish", new_callable=AsyncMock):
+            brain._last_call_time = 0  # Reset rate limiting
+            result = await brain.decide(signal_event)
+
+            assert result is not None
+            assert result.confidence == 1.0

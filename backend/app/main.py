@@ -29,12 +29,20 @@ execution_engine = ExecutionEngine(risk_engine)
 
 async def handle_signal(event: Event) -> None:
     """Pipeline: Signal -> LLM Decision -> Risk Check -> Execute."""
-    action = await llm_brain.decide(event)
-    if action is None:
+    price = event.data.get("price")
+    if price is None or price <= 0:
+        logger.warning(f"Skipping signal for {event.data.get('symbol', 'unknown')}: price is missing or invalid ({price})")
         return
 
-    price = event.data.get("price", 0)
-    await execution_engine.execute_trade(action, price)
+    try:
+        action = await llm_brain.decide(event)
+        if action is None:
+            return
+
+        await execution_engine.execute_trade(action, price)
+    except Exception as e:
+        logger.error(f"Error in signal handling for {event.data.get('symbol', 'unknown')}: {e}")
+        return
 
 
 async def handle_llm_config_changed(event: Event) -> None:
@@ -100,7 +108,7 @@ async def periodic_portfolio_sync() -> None:
                         exposure = abs(pos_data.get("quantity", 0) * pos_data.get("avg_cost", 0))
                         exposure_map[symbol] = exposure
                         qty = pos_data.get("quantity", 0)
-                        current_price = pos_data.get("avg_cost", 0) if qty == 0 else pos_data.get("market_value", 0) / qty
+                        current_price = pos_data.get("avg_cost", 0) if abs(qty) < 1e-9 else pos_data.get("market_value", 0) / qty
                         await upsert_position(
                             broker=broker_name,
                             symbol=symbol,
@@ -234,6 +242,8 @@ async def lifespan(app: FastAPI):
         settings.max_portfolio_exposure_usd = saved_risk["max_portfolio_exposure_usd"]
         settings.max_single_trade_usd = saved_risk["max_single_trade_usd"]
         settings.max_drawdown_pct = saved_risk["max_drawdown_pct"]
+        if "max_position_concentration_pct" in saved_risk:
+            settings.max_position_concentration_pct = saved_risk["max_position_concentration_pct"]
         logger.info("Loaded persisted risk configuration")
 
     # Load LLM config from database (overrides env defaults)
@@ -337,7 +347,10 @@ app.include_router(router)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    content = {"detail": "Internal server error"}
+    if settings.debug:
+        content["error"] = str(exc)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "error": str(exc)},
+        content=content,
     )

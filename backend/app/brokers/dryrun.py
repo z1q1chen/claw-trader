@@ -90,6 +90,11 @@ class DryRunBrokerAdapter(BrokerAdapter):
             pos["total_cost"] = total_cost
             self._balance -= cost
         else:  # SELL
+            if pos["quantity"] < quantity:
+                return OrderResult(
+                    success=False,
+                    error=f"Insufficient position for {symbol}: trying to sell {quantity} but only have {pos['quantity']}",
+                )
             pos["quantity"] -= quantity
             self._balance += cost
             if pos["quantity"] <= 0:
