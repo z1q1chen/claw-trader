@@ -55,6 +55,9 @@ export default function Dashboard() {
   const [brokerStatus, setBrokerStatus] = useState<string | null>(null);
   const [llmStatus, setLlmStatus] = useState<string | null>(null);
   const [riskStatus, setRiskStatus] = useState<string | null>(null);
+  const [marketSearch, setMarketSearch] = useState("");
+  const [markets, setMarkets] = useState<any[]>([]);
+  const [marketsLoading, setMarketsLoading] = useState(false);
   const [tradeForm, setTradeForm] = useState({
     symbol: "",
     side: "buy" as "buy" | "sell",
@@ -191,6 +194,31 @@ export default function Dashboard() {
     }
   };
 
+  const loadTrendingMarkets = async () => {
+    setMarketsLoading(true);
+    try {
+      const data = await api.getTrendingMarkets(10);
+      setMarkets(data);
+    } catch {
+      setMarkets([]);
+    } finally {
+      setMarketsLoading(false);
+    }
+  };
+
+  const searchMarkets = async () => {
+    if (!marketSearch.trim()) return;
+    setMarketsLoading(true);
+    try {
+      const data = await api.searchMarkets(marketSearch);
+      setMarkets(data);
+    } catch {
+      setMarkets([]);
+    } finally {
+      setMarketsLoading(false);
+    }
+  };
+
   return (
     <>
       <div className="header">
@@ -253,7 +281,7 @@ export default function Dashboard() {
               placeholder="Enter API key..."
             />
           </div>
-          {llmConfig.provider === "local" && (
+          {(llmConfig.provider === "local" || llmConfig.provider === "anthropic") && (
             <div className="form-row">
               <label>Base URL</label>
               <input
@@ -423,7 +451,7 @@ export default function Dashboard() {
                   <tr key={i}>
                     <td>{s.symbol}</td>
                     <td>{s.signal_type}</td>
-                    <td>{s.value}</td>
+                    <td>{typeof s.value === "number" ? s.value.toFixed(2) : s.value}</td>
                     <td>{s.created_at}</td>
                   </tr>
                 ))}
@@ -479,6 +507,55 @@ export default function Dashboard() {
             </p>
           )}
         </div>
+
+        {/* Polymarket Markets */}
+        {brokers.brokers.includes("polymarket") && (
+          <div className="card dashboard-full">
+            <h2>Polymarket Markets</h2>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input
+                className="input"
+                value={marketSearch}
+                onChange={(e) => setMarketSearch(e.target.value)}
+                placeholder="Search markets..."
+                onKeyDown={(e) => e.key === "Enter" && searchMarkets()}
+                style={{ flex: 1 }}
+              />
+              <button className="btn" onClick={searchMarkets} disabled={marketsLoading}>
+                Search
+              </button>
+              <button className="btn" onClick={loadTrendingMarkets} disabled={marketsLoading}>
+                Trending
+              </button>
+            </div>
+            {markets.length === 0 ? (
+              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                {marketsLoading ? "Loading..." : "Search for markets or click Trending"}
+              </p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Market</th>
+                    <th>Volume 24h</th>
+                    <th>Liquidity</th>
+                    <th>End Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {markets.map((m, i) => (
+                    <tr key={i}>
+                      <td style={{ maxWidth: 400 }}>{m.question || m.title || "Unknown"}</td>
+                      <td>${(m.volume24hr || m.volume || 0).toLocaleString()}</td>
+                      <td>${(m.liquidity || 0).toLocaleString()}</td>
+                      <td>{m.endDate ? new Date(m.endDate).toLocaleDateString() : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
         {/* Manual Trade */}
         <div className="card">

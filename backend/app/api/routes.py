@@ -83,11 +83,11 @@ async def update_llm_config(req: LLMConfigRequest):
 # --- API Usage ---
 
 @router.get("/api/usage")
-async def get_api_usage(limit: int = 100):
+async def get_api_usage(limit: int = 100, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM api_usage ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM api_usage ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -117,11 +117,11 @@ async def get_api_usage_summary():
 # --- Trade Decisions ---
 
 @router.get("/api/decisions")
-async def get_trade_decisions(limit: int = 50):
+async def get_trade_decisions(limit: int = 50, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM trade_decisions ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM trade_decisions ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -130,11 +130,11 @@ async def get_trade_decisions(limit: int = 50):
 # --- Orders ---
 
 @router.get("/api/orders")
-async def get_orders(limit: int = 50):
+async def get_orders(limit: int = 50, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM orders ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -177,6 +177,17 @@ async def get_risk_snapshot():
         )
         row = await cursor.fetchone()
         return dict(row) if row else {"total_exposure_usd": 0, "kill_switch_active": False}
+
+
+@router.get("/api/risk/history")
+async def get_risk_history(limit: int = 100, offset: int = 0):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM risk_snapshots ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
 
 @router.get("/api/risk/config")
@@ -242,11 +253,11 @@ async def get_live_risk():
 # --- Signals ---
 
 @router.get("/api/signals")
-async def get_recent_signals(limit: int = 100):
+async def get_recent_signals(limit: int = 100, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT * FROM signals ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM signals ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
@@ -362,6 +373,19 @@ async def cancel_order(order_id: str):
         if success:
             return {"status": "ok", "message": f"Order {order_id} cancelled via {broker_name}"}
     raise HTTPException(status_code=404, detail=f"Order {order_id} not found in any broker")
+
+
+@router.get("/api/orders/broker/{broker}")
+async def get_broker_order_history(broker: str, limit: int = 50):
+    from app.main import execution_engine
+    if broker not in execution_engine._brokers:
+        raise HTTPException(status_code=404, detail=f"Broker {broker} not registered")
+    try:
+        orders = await execution_engine._brokers[broker].get_order_history(limit)
+        return orders
+    except Exception as e:
+        logger.error(f"Order history fetch error: {e}")
+        return []
 
 
 # --- Markets ---

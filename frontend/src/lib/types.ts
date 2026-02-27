@@ -100,3 +100,16 @@ export interface BrokersResponse {
   brokers: string[];
   default: string | null;
 }
+
+export interface PolymarketMarket {
+  id: string;
+  question: string;
+  description?: string;
+  outcomes?: string[];
+  outcomePrices?: string;
+  volume24hr?: number;
+  liquidity?: number;
+  endDate?: string;
+  active?: boolean;
+  conditionId?: string;
+}

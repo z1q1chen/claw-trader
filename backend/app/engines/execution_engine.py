@@ -159,3 +159,15 @@ class ExecutionEngine:
         if broker_name and broker_name in self._brokers:
             return await self._brokers[broker_name].get_balance()
         return {}
+
+    async def get_all_positions(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Get positions from all registered brokers."""
+        all_positions = {}
+        for broker_name, broker in self._brokers.items():
+            try:
+                positions = await broker.get_positions()
+                all_positions[broker_name] = positions
+            except Exception as e:
+                logger.warning(f"Failed to get positions from {broker_name}: {e}")
+                all_positions[broker_name] = {}
+        return all_positions

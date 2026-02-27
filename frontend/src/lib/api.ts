@@ -101,6 +101,14 @@ export const api = {
     fetchJSON<any[]>(`/markets/trending?limit=${limit}`),
   searchMarkets: (query: string, limit = 10) =>
     fetchJSON<any[]>(`/markets/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+
+  // Risk History
+  getRiskHistory: (limit = 100) =>
+    fetchJSON<RiskSnapshot[]>(`/risk/history?limit=${limit}`),
+
+  // Broker Orders
+  getBrokerOrders: (broker: string, limit = 50) =>
+    fetchJSON<any[]>(`/orders/broker/${broker}?limit=${limit}`),
 };
 
 export function createWebSocket(

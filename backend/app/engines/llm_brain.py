@@ -200,7 +200,7 @@ class LLMBrain:
         self._provider_name: str = ""
         self._model_name: str = ""
         self._last_call_time: float = 0
-        self._min_call_interval_s: float = 2.0
+        self._min_call_interval_s: float = settings.llm_min_call_interval_s
         self._positions: dict[str, float] = {}
         self._daily_pnl: float = 0.0
         self._total_exposure: float = 0.0
