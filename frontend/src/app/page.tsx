@@ -26,7 +26,7 @@ export default function Dashboard() {
   const [signals, setSignals] = useState<any[]>([]);
   const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
   const [killSwitch, setKillSwitch] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<{ close: () => void } | null>(null);
 
   const refreshData = useCallback(async () => {
     try {
@@ -64,7 +64,7 @@ export default function Dashboard() {
   }, [refreshData]);
 
   useEffect(() => {
-    const ws = createWebSocket((event) => {
+    const conn = createWebSocket((event) => {
       setEventLog((prev) => [
         {
           time: new Date().toLocaleTimeString(),
@@ -78,8 +78,8 @@ export default function Dashboard() {
         refreshData();
       }
     });
-    wsRef.current = ws;
-    return () => ws.close();
+    wsRef.current = conn;
+    return () => conn.close();
   }, [refreshData]);
 
   const saveLLMConfig = async () => {
@@ -96,6 +96,11 @@ export default function Dashboard() {
     const newState = !killSwitch;
     await api.toggleKillSwitch(newState);
     setKillSwitch(newState);
+  };
+
+  const saveRiskConfig = async () => {
+    await api.updateRiskConfig(riskConfig);
+    refreshData();
   };
 
   return (
@@ -245,6 +250,58 @@ export default function Dashboard() {
               <span className="stat-label">VaR 95%</span>
             </div>
           </div>
+        </div>
+
+        {/* Risk Configuration */}
+        <div className="card">
+          <h2>Risk Limits</h2>
+          <div className="form-row">
+            <label>Max Single Trade ($)</label>
+            <input
+              className="input"
+              type="number"
+              value={riskConfig.max_single_trade_usd || ""}
+              onChange={(e) =>
+                setRiskConfig({ ...riskConfig, max_single_trade_usd: parseFloat(e.target.value) || 0 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>Max Daily Loss ($)</label>
+            <input
+              className="input"
+              type="number"
+              value={riskConfig.max_daily_loss_usd || ""}
+              onChange={(e) =>
+                setRiskConfig({ ...riskConfig, max_daily_loss_usd: parseFloat(e.target.value) || 0 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>Max Portfolio Exposure ($)</label>
+            <input
+              className="input"
+              type="number"
+              value={riskConfig.max_portfolio_exposure_usd || ""}
+              onChange={(e) =>
+                setRiskConfig({ ...riskConfig, max_portfolio_exposure_usd: parseFloat(e.target.value) || 0 })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <label>Max Drawdown (%)</label>
+            <input
+              className="input"
+              type="number"
+              value={riskConfig.max_drawdown_pct || ""}
+              onChange={(e) =>
+                setRiskConfig({ ...riskConfig, max_drawdown_pct: parseFloat(e.target.value) || 0 })
+              }
+            />
+          </div>
+          <button className="btn" onClick={saveRiskConfig}>
+            Update Risk Limits
+          </button>
         </div>
 
         {/* Balance */}

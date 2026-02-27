@@ -64,15 +64,50 @@ export const api = {
 
 export function createWebSocket(
   onMessage: (event: any) => void
-): WebSocket {
+): { close: () => void } {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${protocol}//127.0.0.1:8000/ws`);
-  ws.onmessage = (e) => {
-    try {
-      onMessage(JSON.parse(e.data));
-    } catch {
-      console.warn("Failed to parse WS message:", e.data);
-    }
+  const url = `${protocol}//127.0.0.1:8000/ws`;
+  let ws: WebSocket | null = null;
+  let reconnectDelay = 1000;
+  let shouldReconnect = true;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function connect() {
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      reconnectDelay = 1000; // Reset backoff on successful connect
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        onMessage(JSON.parse(e.data));
+      } catch {
+        console.warn("Failed to parse WS message:", e.data);
+      }
+    };
+
+    ws.onclose = () => {
+      if (shouldReconnect) {
+        reconnectTimer = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Max 30s
+          connect();
+        }, reconnectDelay);
+      }
+    };
+
+    ws.onerror = () => {
+      ws?.close();
+    };
+  }
+
+  connect();
+
+  return {
+    close: () => {
+      shouldReconnect = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    },
   };
-  return ws;
 }

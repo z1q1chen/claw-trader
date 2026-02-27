@@ -23,7 +23,7 @@ class IBKRAdapter(BrokerAdapter):
     async def connect(self) -> None:
         from ib_insync import IB
         self._ib = IB()
-        await asyncio.get_event_loop().run_in_executor(
+        await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: self._ib.connect(
                 settings.ibkr_host, settings.ibkr_port, clientId=settings.ibkr_client_id
@@ -48,7 +48,7 @@ class IBKRAdapter(BrokerAdapter):
             from ib_insync import Stock, MarketOrder, LimitOrder
 
             contract = Stock(symbol, "SMART", "USD")
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, lambda: self._ib.qualifyContracts(contract)
             )
 
