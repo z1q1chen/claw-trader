@@ -72,20 +72,21 @@ class RiskEngine:
         logger.warning("Kill switch deactivated")
 
     def update_portfolio(self, positions: dict[str, float], daily_pnl: float) -> None:
-        self._portfolio.positions = positions
-        self._portfolio.total_exposure_usd = sum(abs(v) for v in positions.values())
-        self._portfolio.daily_pnl_usd = daily_pnl
+        with self._reset_lock:
+            self._portfolio.positions = positions
+            self._portfolio.total_exposure_usd = sum(abs(v) for v in positions.values())
+            self._portfolio.daily_pnl_usd = daily_pnl
 
-        if self._portfolio.total_exposure_usd > self._peak_portfolio_value:
-            self._peak_portfolio_value = self._portfolio.total_exposure_usd
-        if self._peak_portfolio_value > 0:
-            drawdown = (
-                (self._peak_portfolio_value - self._portfolio.total_exposure_usd)
-                / self._peak_portfolio_value * 100
-            )
-            self._portfolio.max_drawdown_pct = max(
-                self._portfolio.max_drawdown_pct, drawdown
-            )
+            if self._portfolio.total_exposure_usd > self._peak_portfolio_value:
+                self._peak_portfolio_value = self._portfolio.total_exposure_usd
+            if self._peak_portfolio_value > 0:
+                drawdown = (
+                    (self._peak_portfolio_value - self._portfolio.total_exposure_usd)
+                    / self._peak_portfolio_value * 100
+                )
+                self._portfolio.max_drawdown_pct = max(
+                    self._portfolio.max_drawdown_pct, drawdown
+                )
 
     def check_trade(self, action: TradeAction, current_price: float) -> RiskCheckResult:
         if self._kill_switch:

@@ -32,9 +32,12 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
+  const authHeaders = getAuthHeaders();
+  const { headers: optionHeaders, ...restOptions } = options || {};
+  const mergedHeaders = { ...authHeaders, ...(optionHeaders as Record<string, string> || {}) };
   const res = await fetch(`${API_BASE}${url}`, {
-    headers: getAuthHeaders(),
-    ...options,
+    headers: mergedHeaders,
+    ...restOptions,
   });
   if (!res.ok) {
     let detail = `API error: ${res.status}`;

@@ -381,6 +381,12 @@ async def lifespan(app: FastAPI):
     await feed.stop()
     signal_engine.stop()
 
+    from app.core.webhooks import webhook_manager
+    try:
+        await webhook_manager.shutdown()
+    except Exception as e:
+        logger.warning(f"Error shutting down webhook manager: {e}")
+
     for broker_name, broker in execution_engine._brokers.items():
         if hasattr(broker, 'disconnect'):
             try:

@@ -135,6 +135,46 @@ class TestWebhookManager:
         webhooks = manager.list_webhooks()
         assert webhooks[0]["event_types"] == ["*"]
 
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_http_client(self):
+        """Test that shutdown closes the httpx client."""
+        manager = WebhookManager()
+        webhook = Webhook(
+            id="test-1",
+            url="https://example.com/webhook",
+            event_types=["order_executed"],
+        )
+        manager.register(webhook)
+
+        # Trigger dispatch to create the HTTP client
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            await manager.dispatch("order_executed", {"order_id": "123"})
+            await asyncio.sleep(0.1)
+
+            # Verify client was created
+            assert manager._http is not None
+
+            # Shutdown the manager
+            await manager.shutdown()
+
+            # Verify client was closed and set to None
+            mock_client.aclose.assert_called_once()
+            assert manager._http is None
+
+    @pytest.mark.asyncio
+    async def test_shutdown_when_http_is_none(self):
+        """Test that shutdown handles case when http client is None."""
+        manager = WebhookManager()
+
+        # Shutdown without creating a client
+        await manager.shutdown()
+
+        # Should complete without error and _http should still be None
+        assert manager._http is None
+
 
 # Test for API endpoints
 from fastapi import FastAPI

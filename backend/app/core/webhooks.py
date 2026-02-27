@@ -71,5 +71,10 @@ class WebhookManager:
 
         logger.error(f"Webhook delivery permanently failed to {webhook.url} for {event_type}")
 
+    async def shutdown(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
 
 webhook_manager = WebhookManager()

@@ -189,7 +189,7 @@ async def get_llm_config():
 
 @router.post("/api/llm/config")
 async def update_llm_config(req: LLMConfigRequest):
-    from app.core.database import _write_lock, _xor_encrypt, _get_encryption_key
+    from app.core.database import _write_lock, _xor_encrypt, _xor_decrypt, _get_encryption_key
 
     async with _write_lock:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -202,7 +202,11 @@ async def update_llm_config(req: LLMConfigRequest):
                     "SELECT api_key FROM llm_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
                 )
                 row = await cursor.fetchone()
-                api_key_to_store = row["api_key"] if row else ""
+                encrypted_key = row["api_key"] if row else ""
+                api_key_to_store = encrypted_key
+                # Decrypt for use in plaintext publishing to event bus
+                if encrypted_key:
+                    api_key_plaintext = _xor_decrypt(encrypted_key, _get_encryption_key())
             else:
                 # Encrypt the new api_key before storing
                 api_key_to_store = _xor_encrypt(api_key_plaintext, _get_encryption_key())
@@ -222,8 +226,8 @@ async def update_llm_config(req: LLMConfigRequest):
                 raise
 
     data = req.model_dump()
-    # Use plaintext key for brain reconfiguration (only send the plaintext that was provided)
-    data["api_key"] = api_key_plaintext if api_key_plaintext else api_key_to_store
+    # Use plaintext key for brain reconfiguration (send decrypted key if no new key provided)
+    data["api_key"] = api_key_plaintext if api_key_plaintext else ""
     await event_bus.publish(Event(type="llm_config_changed", data=data))
     return {"status": "ok"}
 
@@ -1196,6 +1200,33 @@ async def apply_strategy_preset(preset_name: str):
     for key, value in preset["position_sizing"].items():
         if hasattr(sizing_cfg, key):
             setattr(sizing_cfg, key, type(getattr(sizing_cfg, key))(value))
+
+    # Build config dicts from current in-memory state after applying preset
+    signal_config_dict = {
+        "rsi_period": cfg.rsi_period,
+        "rsi_oversold": cfg.rsi_oversold,
+        "rsi_overbought": cfg.rsi_overbought,
+        "macd_fast": cfg.macd_fast,
+        "macd_slow": cfg.macd_slow,
+        "macd_signal": cfg.macd_signal,
+        "volume_spike_ratio": cfg.volume_spike_ratio,
+        "bb_period": cfg.bb_period,
+        "bb_std_dev": cfg.bb_std_dev,
+    }
+
+    position_sizing_dict = {
+        "method": sizing_cfg.method,
+        "fixed_quantity": sizing_cfg.fixed_quantity,
+        "portfolio_fraction": sizing_cfg.portfolio_fraction,
+        "kelly_win_rate": sizing_cfg.kelly_win_rate,
+        "kelly_avg_win": sizing_cfg.kelly_avg_win,
+        "kelly_avg_loss": sizing_cfg.kelly_avg_loss,
+        "max_position_pct": sizing_cfg.max_position_pct,
+    }
+
+    # Persist to database
+    await save_signal_config(signal_config_dict)
+    await save_position_sizing_config(position_sizing_dict)
 
     return {"status": "ok", "preset": preset_name}
 

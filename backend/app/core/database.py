@@ -544,6 +544,8 @@ async def load_position_sizing_config() -> dict | None:
 
 async def prune_old_records(days: int = 30) -> dict[str, int]:
     """Delete records older than the specified number of days."""
+    if not isinstance(days, int) or days < 1:
+        raise ValueError("days must be a positive integer (>= 1)")
     counts = {}
     async with _write_lock:
         async with aiosqlite.connect(DB_PATH) as db:
