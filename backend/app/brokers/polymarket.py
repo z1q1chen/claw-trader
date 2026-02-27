@@ -191,11 +191,16 @@ class PolymarketAdapter(BrokerAdapter):
                     for pos in positions_data:
                         condition_id = pos.get("condition_id")
                         if condition_id:
+                            qty = float(pos.get("quantity", 0))
+                            avg_cost = float(pos.get("avg_price", 0))
+                            market_val = float(pos.get("market_value", 0))
                             positions[condition_id] = {
                                 "token_id": pos.get("token_id"),
-                                "quantity": float(pos.get("quantity", 0)),
-                                "avg_cost": float(pos.get("avg_price", 0)),
-                                "market_value": float(pos.get("market_value", 0)),
+                                "quantity": qty,
+                                "avg_cost": avg_cost,
+                                "market_value": market_val,
+                                "unrealized_pnl": market_val - (qty * avg_cost) if qty > 0 else 0,
+                                "realized_pnl": float(pos.get("realized_pnl", 0)),
                             }
                     return positions
                 else:

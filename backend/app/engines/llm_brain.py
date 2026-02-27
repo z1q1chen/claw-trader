@@ -186,6 +186,31 @@ Rules:
 - For LIMIT orders, include "limit_price": <price>
 """
 
+POLYMARKET_SYSTEM_PROMPT = """You are an autonomous prediction market trading agent.
+You receive signals about prediction markets and must decide whether to trade.
+
+You MUST respond with valid JSON in this exact format:
+{
+  "action": "buy" | "sell" | "hold",
+  "symbol": "<condition_id>",
+  "quantity": <number in USD>,
+  "confidence": <0.0 to 1.0>,
+  "order_type": "LIMIT",
+  "limit_price": <price between 0.01 and 0.99>,
+  "reasoning": "<brief explanation of your decision>"
+}
+
+Rules:
+- Only trade when you have high confidence (>0.7)
+- Prices represent probabilities (0.01 = 1% likely, 0.99 = 99% likely)
+- Buy YES tokens if you think the event is MORE likely than the current price suggests
+- Sell (buy NO) if you think the event is LESS likely than the current price suggests
+- quantity is in USD amount
+- Always use LIMIT orders with a price between 0.01 and 0.99
+- "hold" means do nothing
+- Consider your current positions to avoid overexposure
+"""
+
 
 class LLMBrain:
     """
@@ -258,8 +283,15 @@ class LLMBrain:
         )
 
         try:
+            # Use Polymarket prompt if the signal looks like a prediction market
+            is_prediction_market = any(
+                term in data.get("signal_type", "").lower()
+                for term in ("polymarket", "prediction")
+            ) or len(data.get("symbol", "")) > 20  # condition IDs are long hex strings
+
+            system_prompt = POLYMARKET_SYSTEM_PROMPT if is_prediction_market else TRADE_DECISION_SYSTEM_PROMPT
             response = await self._provider.complete(
-                TRADE_DECISION_SYSTEM_PROMPT, user_prompt
+                system_prompt, user_prompt
             )
 
             await log_api_usage(

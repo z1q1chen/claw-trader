@@ -123,7 +123,7 @@ async def periodic_portfolio_sync() -> None:
         except Exception as e:
             logger.error(f"Portfolio sync error: {e}")
 
-        await asyncio.sleep(30)  # Sync every 30 seconds
+        await asyncio.sleep(settings.portfolio_sync_interval_s)
 
 
 @asynccontextmanager
@@ -163,6 +163,13 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("llm_config_changed", handle_llm_config_changed)
     event_bus.subscribe("kill_switch_toggle", handle_kill_switch)
     event_bus.subscribe("signal", handle_signal_log)
+
+    # Auto-connect Polymarket if API key is configured
+    if settings.polymarket_api_key:
+        from app.brokers.polymarket import PolymarketAdapter
+        poly_adapter = PolymarketAdapter()
+        execution_engine.register_broker("polymarket", poly_adapter)
+        logger.info("Polymarket broker auto-connected (API key found)")
 
     # Start periodic portfolio sync
     sync_task = asyncio.create_task(periodic_portfolio_sync())

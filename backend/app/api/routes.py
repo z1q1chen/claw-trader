@@ -522,6 +522,36 @@ async def prune_old_data(days: int = 30):
     return {"status": "ok", "pruned": counts}
 
 
+# --- Configuration ---
+
+class IntervalConfigRequest(BaseModel):
+    interval_s: float
+
+
+class CooldownConfigRequest(BaseModel):
+    cooldown_s: float
+
+
+@router.post("/api/config/llm-interval")
+async def update_llm_interval(req: IntervalConfigRequest):
+    if req.interval_s < 0.5:
+        raise HTTPException(status_code=422, detail="interval_s must be >= 0.5")
+    from app.main import llm_brain
+    llm_brain._min_call_interval_s = req.interval_s
+    settings.llm_min_call_interval_s = req.interval_s
+    return {"status": "ok", "interval_s": req.interval_s}
+
+
+@router.post("/api/config/signal-cooldown")
+async def update_signal_cooldown(req: CooldownConfigRequest):
+    if req.cooldown_s < 1:
+        raise HTTPException(status_code=422, detail="cooldown_s must be >= 1")
+    from app.main import signal_engine
+    signal_engine._signal_cooldown_s = req.cooldown_s
+    settings.signal_cooldown_s = req.cooldown_s
+    return {"status": "ok", "cooldown_s": req.cooldown_s}
+
+
 # --- System ---
 
 @router.get("/api/health")

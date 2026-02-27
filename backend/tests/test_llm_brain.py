@@ -776,3 +776,12 @@ async def test_multiple_sequential_decisions():
             # Third decision should succeed
             result3 = await brain.decide(signal_event)
             assert result3 is not None
+
+
+def test_polymarket_prompt_detected_for_long_symbol():
+    """Prediction market prompt should be used for long condition ID symbols."""
+    from app.engines.llm_brain import POLYMARKET_SYSTEM_PROMPT, TRADE_DECISION_SYSTEM_PROMPT
+    # Verify both prompts exist and are different
+    assert "prediction market" in POLYMARKET_SYSTEM_PROMPT.lower()
+    assert "quantitative trading" in TRADE_DECISION_SYSTEM_PROMPT.lower()
+    assert POLYMARKET_SYSTEM_PROMPT != TRADE_DECISION_SYSTEM_PROMPT

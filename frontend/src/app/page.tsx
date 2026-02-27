@@ -313,6 +313,52 @@ export default function Dashboard() {
           <button className="btn" onClick={saveLLMConfig}>
             Save Configuration
           </button>
+          <hr style={{ margin: "12px 0", borderColor: "var(--border)" }} />
+          <h3 style={{ fontSize: 13, marginBottom: 8, color: "var(--text-muted)" }}>Trading Frequency</h3>
+          <div className="form-row">
+            <label>LLM Call Interval (s)</label>
+            <input
+              className="input"
+              type="number"
+              step="0.5"
+              min="0.5"
+              defaultValue={2}
+              onChange={async (e) => {
+                const val = parseFloat(e.target.value);
+                if (val >= 0.5) {
+                  try {
+                    await fetch("/api/config/llm-interval", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ interval_s: val }),
+                    });
+                  } catch {}
+                }
+              }}
+            />
+          </div>
+          <div className="form-row">
+            <label>Signal Cooldown (s)</label>
+            <input
+              className="input"
+              type="number"
+              step="5"
+              min="1"
+              defaultValue={60}
+              onChange={async (e) => {
+                const val = parseFloat(e.target.value);
+                if (val >= 1) {
+                  try {
+                    await fetch("/api/config/signal-cooldown", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ cooldown_s: val }),
+                    });
+                  } catch {}
+                }
+              }}
+            />
+          </div>
           {llmStatus && (
             <p style={{ marginTop: 8, fontSize: 12, color: llmStatus.startsWith("Error") ? "#ef4444" : "#22c55e" }}>
               {llmStatus}
