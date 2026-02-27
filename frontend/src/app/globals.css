@@ -174,3 +174,58 @@ tr:hover { background: rgba(255,255,255,0.02); }
 }
 .event-log-time { color: var(--text-muted); min-width: 80px; }
 .event-log-type { color: var(--accent); min-width: 120px; }
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .dashboard {
+    grid-template-columns: 1fr !important;
+    padding: 8px !important;
+    gap: 12px !important;
+  }
+
+  .card {
+    padding: 12px !important;
+  }
+
+  table {
+    font-size: 11px;
+  }
+
+  th, td {
+    padding: 4px 6px;
+  }
+
+  .header-controls {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  input, select {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard {
+    padding: 4px !important;
+  }
+
+  h1 {
+    font-size: 18px;
+  }
+
+  h3 {
+    font-size: 14px;
+  }
+
+  table {
+    font-size: 10px;
+  }
+}
+
+/* Table responsive wrapper */
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}

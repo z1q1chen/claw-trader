@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -368,7 +368,7 @@ async def get_recent_signals(limit: int = 100, offset: int = 0):
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue = asyncio.Queue()  # Unbounded queue
     event_bus.register_ws_client(queue)
 
     try:
@@ -922,6 +922,47 @@ async def apply_strategy_preset(preset_name: str):
             setattr(sizing_cfg, key, type(getattr(sizing_cfg, key))(value))
 
     return {"status": "ok", "preset": preset_name}
+
+
+# --- Webhooks ---
+
+@router.get("/api/webhooks")
+async def list_webhooks():
+    from app.core.webhooks import webhook_manager
+    return webhook_manager.list_webhooks()
+
+
+@router.post("/api/webhooks")
+async def create_webhook(req: dict):
+    from app.core.webhooks import webhook_manager, Webhook
+    import uuid
+    webhook_id = str(uuid.uuid4())[:8]
+    webhook = Webhook(
+        id=webhook_id,
+        url=req["url"],
+        event_types=req.get("event_types", ["*"]),
+        enabled=req.get("enabled", True),
+    )
+    webhook_manager.register(webhook)
+    return {"id": webhook_id, "status": "created"}
+
+
+@router.delete("/api/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str):
+    from app.core.webhooks import webhook_manager
+    if webhook_manager.unregister(webhook_id):
+        return {"status": "deleted"}
+    return JSONResponse(status_code=404, content={"detail": "Webhook not found"})
+
+
+@router.post("/api/webhooks/{webhook_id}/test")
+async def test_webhook(webhook_id: str):
+    from app.core.webhooks import webhook_manager
+    webhooks = {w["id"]: w for w in webhook_manager.list_webhooks()}
+    if webhook_id not in webhooks:
+        return JSONResponse(status_code=404, content={"detail": "Webhook not found"})
+    await webhook_manager.dispatch("test", {"message": "Webhook test from Claw Trader"})
+    return {"status": "test_sent"}
 
 
 # --- System ---

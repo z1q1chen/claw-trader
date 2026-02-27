@@ -342,7 +342,11 @@ class LLMBrain:
                 request_type="trade_decision",
             )
 
-            decision = json.loads(response.content)
+            try:
+                decision = json.loads(response.content)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"LLM returned invalid JSON: {e}. Raw: {response.content[:200]}")
+                return None
 
             await event_bus.publish(Event(
                 type="llm_decision",

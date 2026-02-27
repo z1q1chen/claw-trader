@@ -63,6 +63,12 @@ class EventBus:
         dead_clients = []
         for queue in self._ws_clients:
             try:
+                # Handle backpressure: drop oldest messages if queue exceeds threshold
+                if queue.qsize() > 500:
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
                 queue.put_nowait(msg)
             except asyncio.QueueFull:
                 dead_clients.append(queue)

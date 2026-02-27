@@ -67,6 +67,12 @@ async def handle_signal_log(event: Event) -> None:
     )
 
 
+async def handle_webhook_dispatch(event: Event) -> None:
+    """Forward events to registered webhooks."""
+    from app.core.webhooks import webhook_manager
+    await webhook_manager.dispatch(event.type, event.data)
+
+
 async def periodic_daily_reset() -> None:
     """Reset risk metrics at midnight UTC each day."""
     while True:
@@ -86,16 +92,21 @@ async def periodic_portfolio_sync() -> None:
             async with execution_engine._portfolio_lock:
                 for broker_name, broker in execution_engine._brokers.items():
                     positions = await broker.get_positions()
+                    if not isinstance(positions, dict):
+                        logger.warning(f"Broker {broker_name} returned invalid positions: {type(positions)}")
+                        continue
                     exposure_map: dict[str, float] = {}
                     for symbol, pos_data in positions.items():
                         exposure = abs(pos_data.get("quantity", 0) * pos_data.get("avg_cost", 0))
                         exposure_map[symbol] = exposure
+                        qty = pos_data.get("quantity", 0)
+                        current_price = pos_data.get("avg_cost", 0) if qty == 0 else pos_data.get("market_value", 0) / qty
                         await upsert_position(
                             broker=broker_name,
                             symbol=symbol,
-                            quantity=pos_data.get("quantity", 0),
+                            quantity=qty,
                             avg_entry_price=pos_data.get("avg_cost", 0),
-                            current_price=pos_data.get("market_value", 0) / max(pos_data.get("quantity", 1), 0.01),
+                            current_price=current_price,
                             unrealized_pnl=pos_data.get("unrealized_pnl", 0),
                             realized_pnl=pos_data.get("realized_pnl", 0),
                         )
@@ -247,6 +258,10 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("llm_config_changed", handle_llm_config_changed)
     event_bus.subscribe("kill_switch_toggle", handle_kill_switch)
     event_bus.subscribe("signal", handle_signal_log)
+    event_bus.subscribe("order_executed", handle_webhook_dispatch)
+    event_bus.subscribe("order_failed", handle_webhook_dispatch)
+    event_bus.subscribe("trade_rejected", handle_webhook_dispatch)
+    event_bus.subscribe("order_cancelled", handle_webhook_dispatch)
 
     # Register dry-run broker if enabled
     if settings.dry_run_mode:

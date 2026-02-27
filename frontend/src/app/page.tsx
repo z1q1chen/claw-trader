@@ -394,7 +394,7 @@ export default function Dashboard() {
           )}
           <div className="header">
         <h1>Claw Trader</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div className="header-controls" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <span>
             <span
               className={`status-dot ${health === "connected" ? "green" : "red"}`}
@@ -540,6 +540,7 @@ export default function Dashboard() {
           {usageSummary.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No API calls yet</p>
           ) : (
+            <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
@@ -564,6 +565,7 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
@@ -1105,6 +1107,7 @@ export default function Dashboard() {
           {signals.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No signals yet</p>
           ) : (
+            <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
@@ -1125,6 +1128,7 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
@@ -1201,6 +1205,7 @@ export default function Dashboard() {
                 {marketsLoading ? "Loading..." : "Search for markets or click Trending"}
               </p>
             ) : (
+              <div className="table-wrapper">
               <table>
                 <thead>
                   <tr>
@@ -1239,6 +1244,7 @@ export default function Dashboard() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         )}
@@ -1321,6 +1327,7 @@ export default function Dashboard() {
           {positions.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No open positions</p>
           ) : (
+            <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
@@ -1359,6 +1366,7 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
@@ -1368,6 +1376,7 @@ export default function Dashboard() {
           {decisions.length === 0 ? (
             <p style={{ color: "var(--text-muted)" }}>No decisions yet</p>
           ) : (
+            <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
@@ -1414,6 +1423,7 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
@@ -1435,6 +1445,7 @@ export default function Dashboard() {
             <p style={{ color: "var(--text-muted)" }}>No orders yet</p>
           ) : (
             <>
+              <div className="table-wrapper">
               <table>
                 <thead>
                   <tr>
@@ -1480,6 +1491,7 @@ export default function Dashboard() {
                   ))}
                 </tbody>
               </table>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, alignItems: 'center' }}>
                 <button disabled={orderPage === 0} onClick={() => setOrderPage(p => p - 1)}>← Previous</button>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Page {orderPage + 1} of {Math.ceil(orderTotal / ORDER_PAGE_SIZE) || 1}</span>
