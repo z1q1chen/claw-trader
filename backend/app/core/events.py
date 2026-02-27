@@ -53,11 +53,12 @@ class EventBus:
 
     async def publish(self, event: Event) -> None:
         handlers = self._handlers.get(event.type, [])
-        for handler in handlers:
-            try:
-                await handler(event)
-            except Exception as e:
-                logger.error(f"Event handler error for {event.type}: {e}")
+        if handlers:
+            tasks = [asyncio.create_task(handler(event)) for handler in handlers]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Event handler error for {event.type}: {result}")
 
         msg = json.dumps(asdict(event))
         dead_clients = []

@@ -137,7 +137,6 @@ export const api = {
   cancelOrder: (broker: string, orderId: string) =>
     fetchJSON<{ success: boolean }>(`/orders/${orderId}/cancel`, {
       method: "POST",
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ broker }),
     }),
 
@@ -207,6 +206,18 @@ export const api = {
   // Trade Journal
   getTradeJournal: (limit = 50, offset = 0) =>
     fetchJSON<PaginatedResponse<JournalEntry>>(`/journal?limit=${limit}&offset=${offset}`),
+
+  // Trading Frequency Config
+  updateLLMInterval: (interval_s: number) =>
+    fetchJSON<{ status: string; interval_s: number }>("/config/llm-interval", {
+      method: "POST",
+      body: JSON.stringify({ interval_s }),
+    }),
+  updateSignalCooldown: (cooldown_s: number) =>
+    fetchJSON<{ status: string; cooldown_s: number }>("/config/signal-cooldown", {
+      method: "POST",
+      body: JSON.stringify({ cooldown_s }),
+    }),
 };
 
 export function createWebSocket(
@@ -214,7 +225,17 @@ export function createWebSocket(
   onConnectionChange?: (connected: boolean) => void
 ): { close: () => void } {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${protocol}//${window.location.host}/ws`;
+
+  // Get auth token from localStorage
+  let wsUrl = `${protocol}//${window.location.host}/ws`;
+  if (typeof window !== "undefined") {
+    const apiKey = localStorage.getItem("claw-trader-api-key");
+    if (apiKey) {
+      wsUrl += `?token=${encodeURIComponent(apiKey)}`;
+    }
+  }
+
+  const url = wsUrl;
   let ws: WebSocket | null = null;
   let reconnectDelay = 1000;
   let shouldReconnect = true;

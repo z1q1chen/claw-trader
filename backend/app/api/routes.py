@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hmac
 import io
 import ipaddress
 import json
@@ -456,9 +457,22 @@ async def get_journal(limit: int = 50, offset: int = 0, symbol: str | None = Non
 
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    # Check token from query parameter
+    token = ws.query_params.get("token", "")
+    if settings.auth_enabled and settings.api_secret_key:
+        from app.core.auth import hash_api_key
+        if not token or not hmac.compare_digest(
+            hash_api_key(token),
+            hash_api_key(settings.api_secret_key)
+        ):
+            await ws.close(code=4001, reason="Unauthorized")
+            return
+
     await ws.accept()
     queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
     event_bus.register_ws_client(queue)
+    # Track if this WebSocket is authenticated for processing commands
+    ws_authenticated = True
 
     try:
         async def send_loop():
@@ -469,6 +483,9 @@ async def websocket_endpoint(ws: WebSocket):
         async def receive_loop():
             while True:
                 data = await ws.receive_json()
+                # Only process commands from authenticated connections
+                if not ws_authenticated:
+                    continue
                 command = data.get("command")
                 if command == "kill_switch":
                     await event_bus.publish(Event(type="kill_switch_toggle", data={"active": data.get("active", True)}))

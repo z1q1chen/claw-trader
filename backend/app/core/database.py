@@ -422,12 +422,42 @@ async def prune_old_records(days: int = 30) -> dict[str, int]:
     counts = {}
     async with _write_lock:
         async with aiosqlite.connect(DB_PATH) as db:
+            # Prune standard tables
             for table in ("signals", "risk_snapshots", "api_usage"):
                 cursor = await db.execute(
                     f"DELETE FROM {table} WHERE created_at < datetime('now', ?)",
                     (f'-{days} days',)
                 )
                 counts[table] = cursor.rowcount
+
+            # Prune trade_journal
+            cursor = await db.execute(
+                "DELETE FROM trade_journal WHERE created_at < datetime('now', ?)",
+                (f'-{days} days',)
+            )
+            counts["trade_journal"] = cursor.rowcount
+
+            # Prune trade_decisions
+            cursor = await db.execute(
+                "DELETE FROM trade_decisions WHERE created_at < datetime('now', ?)",
+                (f'-{days} days',)
+            )
+            counts["trade_decisions"] = cursor.rowcount
+
+            # Prune performance_metrics
+            cursor = await db.execute(
+                "DELETE FROM performance_metrics WHERE created_at < datetime('now', ?)",
+                (f'-{days} days',)
+            )
+            counts["performance_metrics"] = cursor.rowcount
+
+            # Prune terminal orders only (filled, failed, expired, cancelled)
+            cursor = await db.execute(
+                "DELETE FROM orders WHERE created_at < datetime('now', ?) AND status IN ('filled', 'failed', 'expired', 'cancelled')",
+                (f'-{days} days',)
+            )
+            counts["orders"] = cursor.rowcount
+
             await db.commit()
     return counts
 

@@ -314,6 +314,58 @@ async def test_sell_nonexistent_position_returns_failure(dryrun_broker: DryRunBr
 
 
 @pytest.mark.asyncio
+async def test_buy_with_insufficient_funds_returns_failure(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that buying more than balance returns failure."""
+    # Set balance to $1000
+    dryrun_broker._balance = 1000.0
+
+    # Try to buy 100 shares at $100 = $10,000 (more than balance)
+    result = await dryrun_broker.place_order("EXPENSIVE", "BUY", 100.0, limit_price=100.0)
+
+    assert result.success is False
+    assert "Insufficient funds" in result.error
+    assert "need" in result.error.lower()
+    assert "have" in result.error.lower()
+
+    # Verify balance unchanged
+    balance = await dryrun_broker.get_balance()
+    assert balance["AvailableFunds"] == 1000.0
+
+    # Verify no position was created
+    positions = await dryrun_broker.get_positions()
+    assert "EXPENSIVE" not in positions
+
+
+@pytest.mark.asyncio
+async def test_buy_exactly_balance_returns_failure_with_slippage(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that buying exactly balance amount fails due to slippage increasing cost."""
+    dryrun_broker._balance = 1000.0
+
+    # Try to buy 10 shares at $100 = $1000 (exactly balance)
+    # But with slippage (0.1%-0.3%), actual cost will be higher and fail
+    result = await dryrun_broker.place_order("STOCK", "BUY", 10.0, limit_price=100.0)
+
+    assert result.success is False
+    assert "Insufficient funds" in result.error
+
+
+@pytest.mark.asyncio
+async def test_buy_within_budget_succeeds(dryrun_broker: DryRunBrokerAdapter) -> None:
+    """Test that buying within budget succeeds."""
+    dryrun_broker._balance = 10000.0
+
+    # Buy 10 shares at $100 = ~$1000 (well within budget)
+    result = await dryrun_broker.place_order("STOCK", "BUY", 10.0, limit_price=100.0)
+
+    assert result.success is True
+    assert result.filled_quantity == 10.0
+
+    # Balance should be reduced
+    balance = await dryrun_broker.get_balance()
+    assert balance["AvailableFunds"] < 10000.0
+
+
+@pytest.mark.asyncio
 async def test_state_persistence_save_and_load() -> None:
     """Test that broker state is persisted to JSON and can be restored."""
     # Clean up any existing state file

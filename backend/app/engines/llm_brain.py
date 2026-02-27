@@ -314,7 +314,6 @@ class LLMBrain:
         if elapsed < self._min_call_interval_s:
             logger.debug(f"LLM call skipped (cooldown): {elapsed:.1f}s < {self._min_call_interval_s}s interval")
             return None
-        self._last_call_time = now
 
         data = signal_event.data
         portfolio_context = ""
@@ -347,6 +346,7 @@ class LLMBrain:
 
             system_prompt = POLYMARKET_SYSTEM_PROMPT if is_prediction_market else TRADE_DECISION_SYSTEM_PROMPT
             async with self._call_semaphore:
+                self._last_call_time = time.monotonic()
                 response = await self._provider.complete(
                     system_prompt, user_prompt
                 )

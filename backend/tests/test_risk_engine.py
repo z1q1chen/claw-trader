@@ -102,6 +102,69 @@ class TestRiskEngineCheckTrade:
         assert result.adjusted_quantity is None
         assert result.exposure_after == 1000.0
 
+    def test_check_trade_sell_reduces_exposure(self, risk_engine):
+        """SELL trade should reduce position exposure."""
+        # Set up: Long position in AAPL
+        risk_engine.update_portfolio({"AAPL": 5000.0}, 0.0)
+
+        # Create a SELL trade action
+        sell_action = TradeAction(
+            symbol="AAPL",
+            side="sell",
+            quantity=5.0,
+            reasoning="Close position",
+            confidence=0.8,
+            strategy="test",
+        )
+
+        result = risk_engine.check_trade(sell_action, current_price=100.0)
+
+        # SELL should reduce exposure: 5000 - 500 = 4500
+        assert result.passed is True
+        assert result.exposure_after == pytest.approx(4500.0)
+
+    def test_check_trade_sell_not_rejected_at_max_concentration(self, risk_engine):
+        """SELL trades should not be rejected when position is at max concentration."""
+        # max_per_position = 50000 * 0.20 = 10000
+        # Set up position near the limit
+        risk_engine.update_portfolio({"AAPL": 9500.0}, 0.0)
+
+        # Create a SELL trade (should reduce exposure, not increase)
+        sell_action = TradeAction(
+            symbol="AAPL",
+            side="sell",
+            quantity=5.0,
+            reasoning="Reduce position",
+            confidence=0.8,
+            strategy="test",
+        )
+
+        result = risk_engine.check_trade(sell_action, current_price=100.0)
+
+        # SELL should pass because it reduces exposure: 9500 - 500 = 9000
+        assert result.passed is True
+        assert result.exposure_after == pytest.approx(9000.0)
+
+    def test_check_trade_sell_fully_closes_position(self, risk_engine):
+        """SELL trade that completely closes position should pass."""
+        # Set up a small position
+        risk_engine.update_portfolio({"MSFT": 1000.0}, 0.0)
+
+        # Sell the entire position
+        sell_action = TradeAction(
+            symbol="MSFT",
+            side="sell",
+            quantity=10.0,
+            reasoning="Close all",
+            confidence=0.8,
+            strategy="test",
+        )
+
+        result = risk_engine.check_trade(sell_action, current_price=100.0)
+
+        assert result.passed is True
+        assert result.exposure_after == pytest.approx(0.0)
+
     def test_check_trade_adjusts_quantity_when_exceeds_max_single_trade(self, risk_engine, trade_action):
         """Trade should be adjusted when trade_value > max_single_trade_usd."""
         risk_engine.update_portfolio({}, 0.0)

@@ -102,18 +102,24 @@ class RiskEngine:
             adjusted_quantity = settings.max_single_trade_usd / current_price
             trade_value = settings.max_single_trade_usd
 
+        # Determine exposure change based on side
+        if action.side.upper() == "SELL":
+            exposure_delta = -trade_value
+        else:
+            exposure_delta = trade_value
+
         # Check position concentration
         current_symbol_exposure = abs(self._portfolio.positions.get(action.symbol, 0))
-        new_exposure = current_symbol_exposure + trade_value
+        new_symbol_exposure = max(0, current_symbol_exposure + exposure_delta)
         max_per_position = settings.max_portfolio_exposure_usd * (settings.max_position_concentration_pct / 100.0)
-        if new_exposure > max_per_position:
+        if new_symbol_exposure > max_per_position:
             return RiskCheckResult(
                 passed=False,
-                rejection_reason=f"Position in {action.symbol} would reach ${new_exposure:.0f}, exceeding {settings.max_position_concentration_pct}% concentration limit of ${max_per_position:.0f}",
+                rejection_reason=f"Position in {action.symbol} would reach ${new_symbol_exposure:.0f}, exceeding {settings.max_position_concentration_pct}% concentration limit of ${max_per_position:.0f}",
             )
 
         # Check total portfolio exposure
-        new_total_exposure = self._portfolio.total_exposure_usd + trade_value
+        new_total_exposure = max(0, self._portfolio.total_exposure_usd + exposure_delta)
         if new_total_exposure > settings.max_portfolio_exposure_usd:
             return RiskCheckResult(
                 passed=False,

@@ -77,6 +77,14 @@ class DryRunBrokerAdapter(BrokerAdapter):
 
         cost = filled_price * quantity
 
+        # For BUY, check if we have sufficient funds
+        if side.upper() == "BUY":
+            if cost > self._balance:
+                return OrderResult(
+                    success=False,
+                    error=f"Insufficient funds: need ${cost:.2f}, have ${self._balance:.2f}",
+                )
+
         # Update virtual positions
         if symbol not in self._positions:
             self._positions[symbol] = {"quantity": 0, "avg_cost": 0, "total_cost": 0}

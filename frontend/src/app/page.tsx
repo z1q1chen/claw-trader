@@ -26,6 +26,16 @@ interface EventLogEntry {
   data: string;
 }
 
+function createDebounce(fn: (value: number) => Promise<void>, delayMs: number = 500) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  return (value: number) => {
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      fn(value).catch(() => {});
+    }, delayMs);
+  };
+}
+
 export default function Dashboard() {
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -611,16 +621,10 @@ export default function Dashboard() {
               step="0.5"
               min="0.5"
               defaultValue={2}
-              onChange={async (e) => {
+              onBlur={async (e) => {
                 const val = parseFloat(e.target.value);
                 if (val >= 0.5) {
-                  try {
-                    await fetch("/api/config/llm-interval", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ interval_s: val }),
-                    });
-                  } catch {}
+                  await api.updateLLMInterval(val);
                 }
               }}
             />
@@ -633,16 +637,10 @@ export default function Dashboard() {
               step="5"
               min="1"
               defaultValue={60}
-              onChange={async (e) => {
+              onBlur={async (e) => {
                 const val = parseFloat(e.target.value);
                 if (val >= 1) {
-                  try {
-                    await fetch("/api/config/signal-cooldown", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ cooldown_s: val }),
-                    });
-                  } catch {}
+                  await api.updateSignalCooldown(val);
                 }
               }}
             />

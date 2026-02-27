@@ -108,7 +108,7 @@ async def periodic_portfolio_sync() -> None:
                         exposure = abs(pos_data.get("quantity", 0) * pos_data.get("avg_cost", 0))
                         exposure_map[symbol] = exposure
                         qty = pos_data.get("quantity", 0)
-                        current_price = pos_data.get("avg_cost", 0) if abs(qty) < 1e-9 else pos_data.get("market_value", 0) / qty
+                        current_price = pos_data.get("avg_cost", 0) if abs(qty) < 0.0001 else pos_data.get("market_value", 0) / qty
                         await upsert_position(
                             broker=broker_name,
                             symbol=symbol,
