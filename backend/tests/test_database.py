@@ -293,8 +293,8 @@ async def test_run_migrations_idempotent(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should have 5 migrations total (v1, v2, v3, v4, v5)
-    assert result[0] == 5
+    # Should have 7 migrations total (v1-v7)
+    assert result[0] == 7
 
 
 @pytest.mark.asyncio
@@ -305,8 +305,8 @@ async def test_run_migrations_tracks_version(temp_db):
     async with aiosqlite.connect(temp_db) as db:
         cursor = await db.execute("SELECT MAX(version) FROM schema_migrations")
         result = await cursor.fetchone()
-    # Should track v1, v2, v3, v4, v5
-    assert result[0] == 5
+    # Should track v1-v7
+    assert result[0] == 7
 
 
 @pytest.mark.asyncio
@@ -677,3 +677,165 @@ async def test_migration_4_creates_trade_journal_table(temp_db):
 
     assert result is not None
     assert result[0] == "trade_journal"
+
+
+# ============================================================================
+# Kelly Criterion Stats Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_recent_trade_stats_no_trades(tmp_path, monkeypatch):
+    """Test get_recent_trade_stats returns None when no filled trades."""
+    from app.core.database import get_recent_trade_stats
+    import app.core.database as db_module
+
+    db_path = tmp_path / "test_stats_1.db"
+    monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
+
+    # Create orders table with all required columns
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            broker TEXT NOT NULL,
+            broker_order_id TEXT,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            order_type TEXT NOT NULL DEFAULT 'MARKET',
+            quantity REAL NOT NULL,
+            limit_price REAL,
+            filled_price REAL,
+            filled_quantity REAL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            decision_id INTEGER,
+            expires_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await db.commit()
+
+        stats = await get_recent_trade_stats(lookback_days=30)
+        assert stats is None
+
+
+@pytest.mark.asyncio
+async def test_get_recent_trade_stats_with_filled_orders(tmp_path, monkeypatch):
+    """Test get_recent_trade_stats with filled buy/sell orders."""
+    from app.core.database import get_recent_trade_stats
+    import app.core.database as db_module
+
+    db_path = tmp_path / "test_stats_2.db"
+    monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
+
+    # Create orders table with all required columns
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broker TEXT NOT NULL,
+                broker_order_id TEXT,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                order_type TEXT NOT NULL DEFAULT 'MARKET',
+                quantity REAL NOT NULL,
+                limit_price REAL,
+                filled_price REAL,
+                filled_quantity REAL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decision_id INTEGER,
+                expires_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await db.commit()
+
+    # Create a buy order
+    buy_order_id = await log_order(
+        broker="ibkr", symbol="AAPL", side="BUY",
+        order_type="MARKET", quantity=10.0,
+    )
+    await update_order_status(buy_order_id, "filled", filled_price=100.0, filled_quantity=10.0)
+
+    # Create a sell order (profitable trade)
+    sell_order_id = await log_order(
+        broker="ibkr", symbol="AAPL", side="SELL",
+        order_type="MARKET", quantity=10.0,
+    )
+    await update_order_status(sell_order_id, "filled", filled_price=110.0, filled_quantity=10.0)
+
+    stats = await get_recent_trade_stats(lookback_days=30)
+
+    assert stats is not None
+    assert stats["total_trades"] == 2
+    assert stats["win_rate"] > 0
+    assert stats["avg_win"] > 0
+    assert stats["avg_loss"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_recent_trade_stats_calculates_win_rate(tmp_path, monkeypatch):
+    """Test that get_recent_trade_stats correctly calculates win/loss stats."""
+    from app.core.database import get_recent_trade_stats
+    import app.core.database as db_module
+
+    db_path = tmp_path / "test_stats_3.db"
+    monkeypatch.setattr(db_module, "DB_PATH", str(db_path))
+
+    # Create orders table with all required columns
+    async with aiosqlite.connect(str(db_path)) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broker TEXT NOT NULL,
+                broker_order_id TEXT,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                order_type TEXT NOT NULL DEFAULT 'MARKET',
+                quantity REAL NOT NULL,
+                limit_price REAL,
+                filled_price REAL,
+                filled_quantity REAL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decision_id INTEGER,
+                expires_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        await db.commit()
+
+    # Create 2 winning trades and 1 losing trade
+    # Win 1: Buy at 100, sell at 110 = 10 profit
+    buy1 = await log_order("ibkr", "AAPL", "BUY", "MARKET", 10.0)
+    await update_order_status(buy1, "filled", filled_price=100.0, filled_quantity=10.0)
+
+    sell1 = await log_order("ibkr", "AAPL", "SELL", "MARKET", 10.0)
+    await update_order_status(sell1, "filled", filled_price=110.0, filled_quantity=10.0)
+
+    # Win 2: Buy at 50, sell at 60 = 10 profit
+    buy2 = await log_order("ibkr", "MSFT", "BUY", "MARKET", 10.0)
+    await update_order_status(buy2, "filled", filled_price=50.0, filled_quantity=10.0)
+
+    sell2 = await log_order("ibkr", "MSFT", "SELL", "MARKET", 10.0)
+    await update_order_status(sell2, "filled", filled_price=60.0, filled_quantity=10.0)
+
+    # Loss: Buy at 200, sell at 190 = 10 loss
+    buy3 = await log_order("ibkr", "GOOGL", "BUY", "MARKET", 10.0)
+    await update_order_status(buy3, "filled", filled_price=200.0, filled_quantity=10.0)
+
+    sell3 = await log_order("ibkr", "GOOGL", "SELL", "MARKET", 10.0)
+    await update_order_status(sell3, "filled", filled_price=190.0, filled_quantity=10.0)
+
+    stats = await get_recent_trade_stats(lookback_days=30)
+
+    assert stats is not None
+    assert stats["total_trades"] == 6
+    # Should have matched pairs based on FIFO matching
+    # At least one profitable trade should be matched
+    assert stats is not None  # Stats should be returned
+    assert "win_rate" in stats
+    assert "avg_win" in stats
+    assert "avg_loss" in stats

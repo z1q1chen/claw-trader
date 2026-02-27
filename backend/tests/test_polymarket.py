@@ -83,7 +83,9 @@ class TestPolymarketPlaceOrder:
             result = await adapter.place_order("test_id", "buy", 10.0, limit_price=0.55)
             assert result.success is True
             assert result.broker_order_id == "order_123"
-            assert result.filled_quantity == 10.0
+            # Order is pending (placed on book), not immediately filled
+            assert result.filled_price is None
+            assert result.filled_quantity is None
 
     @pytest.mark.asyncio
     async def test_place_order_sell_success(self, adapter):
@@ -105,7 +107,9 @@ class TestPolymarketPlaceOrder:
             result = await adapter.place_order("test_id", "sell", 5.0, limit_price=0.45)
             assert result.success is True
             assert result.broker_order_id == "order_456"
-            assert result.filled_quantity == 5.0
+            # Order is pending (placed on book), not immediately filled
+            assert result.filled_price is None
+            assert result.filled_quantity is None
 
 
 class TestPolymarketGetPositions:

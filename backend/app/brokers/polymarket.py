@@ -184,8 +184,8 @@ class PolymarketAdapter(BrokerAdapter):
                 return OrderResult(
                     success=True,
                     broker_order_id=result.get("id"),
-                    filled_price=price,
-                    filled_quantity=quantity,
+                    filled_price=None,
+                    filled_quantity=None,
                 )
             elif response.status_code in (400, 401, 403):
                 error_text = response.text[:200]

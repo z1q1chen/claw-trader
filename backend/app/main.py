@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config, get_stale_orders, update_order_status, get_expired_orders
+from app.core.database import init_db, save_risk_snapshot, log_signal, upsert_position, load_risk_config, load_llm_config, load_signal_config, load_position_sizing_config, get_stale_orders, update_order_status, get_expired_orders, get_recent_trade_stats
 from app.core.events import Event, event_bus
 from app.core.logging import setup_logging, logger
 from app.core.middleware import RateLimitMiddleware, AuthMiddleware
@@ -141,6 +141,20 @@ async def periodic_portfolio_sync() -> None:
                     if total_exposure > 0 and daily_pnl != 0:
                         daily_return_pct = daily_pnl / total_exposure * 100
                         risk_engine.add_return(daily_return_pct)
+
+                    # Update Kelly parameters from live trading stats
+                    if execution_engine._position_sizer and execution_engine._position_sizer.config.method == "kelly":
+                        try:
+                            stats = await get_recent_trade_stats(lookback_days=30)
+                            if stats and stats.get("total_trades", 0) >= 10:
+                                execution_engine._position_sizer.update_stats(
+                                    win_rate=stats["win_rate"],
+                                    avg_win=stats["avg_win"],
+                                    avg_loss=stats["avg_loss"],
+                                )
+                                logger.info(f"Updated Kelly stats: win_rate={stats['win_rate']:.2%}, avg_win={stats['avg_win']:.2f}, avg_loss={stats['avg_loss']:.2f}")
+                        except Exception as e:
+                            logger.warning(f"Failed to update Kelly stats: {e}")
 
             snapshot = risk_engine.get_risk_snapshot()
             await save_risk_snapshot(
@@ -279,6 +293,32 @@ async def lifespan(app: FastAPI):
         llm_brain.configure("openai", "gpt-4o", settings.openai_api_key)
     elif settings.anthropic_api_key:
         llm_brain.configure("anthropic", "claude-3-5-sonnet-20241022", settings.anthropic_api_key)
+
+    # Load signal config from database (overrides env defaults)
+    saved_signal_cfg = await load_signal_config()
+    if saved_signal_cfg:
+        signal_engine.signal_config.rsi_period = saved_signal_cfg.get("rsi_period", signal_engine.signal_config.rsi_period)
+        signal_engine.signal_config.rsi_oversold = saved_signal_cfg.get("rsi_oversold", signal_engine.signal_config.rsi_oversold)
+        signal_engine.signal_config.rsi_overbought = saved_signal_cfg.get("rsi_overbought", signal_engine.signal_config.rsi_overbought)
+        signal_engine.signal_config.macd_fast = saved_signal_cfg.get("macd_fast", signal_engine.signal_config.macd_fast)
+        signal_engine.signal_config.macd_slow = saved_signal_cfg.get("macd_slow", signal_engine.signal_config.macd_slow)
+        signal_engine.signal_config.macd_signal = saved_signal_cfg.get("macd_signal", signal_engine.signal_config.macd_signal)
+        signal_engine.signal_config.volume_spike_ratio = saved_signal_cfg.get("volume_spike_ratio", signal_engine.signal_config.volume_spike_ratio)
+        signal_engine.signal_config.bb_period = saved_signal_cfg.get("bb_period", signal_engine.signal_config.bb_period)
+        signal_engine.signal_config.bb_std_dev = saved_signal_cfg.get("bb_std_dev", signal_engine.signal_config.bb_std_dev)
+        logger.info("Loaded signal config from DB")
+
+    # Load position sizing config from database (overrides env defaults)
+    saved_sizing_cfg = await load_position_sizing_config()
+    if saved_sizing_cfg:
+        execution_engine._position_sizer.config.method = saved_sizing_cfg.get("method", execution_engine._position_sizer.config.method)
+        execution_engine._position_sizer.config.fixed_quantity = saved_sizing_cfg.get("fixed_quantity", execution_engine._position_sizer.config.fixed_quantity)
+        execution_engine._position_sizer.config.portfolio_fraction = saved_sizing_cfg.get("portfolio_fraction", execution_engine._position_sizer.config.portfolio_fraction)
+        execution_engine._position_sizer.config.kelly_win_rate = saved_sizing_cfg.get("kelly_win_rate", execution_engine._position_sizer.config.kelly_win_rate)
+        execution_engine._position_sizer.config.kelly_avg_win = saved_sizing_cfg.get("kelly_avg_win", execution_engine._position_sizer.config.kelly_avg_win)
+        execution_engine._position_sizer.config.kelly_avg_loss = saved_sizing_cfg.get("kelly_avg_loss", execution_engine._position_sizer.config.kelly_avg_loss)
+        execution_engine._position_sizer.config.max_position_pct = saved_sizing_cfg.get("max_position_pct", execution_engine._position_sizer.config.max_position_pct)
+        logger.info("Loaded position sizing config from DB")
 
     # Wire up event handlers
     event_bus.subscribe("signal", handle_signal)

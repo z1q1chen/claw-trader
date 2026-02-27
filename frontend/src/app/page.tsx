@@ -1383,7 +1383,13 @@ export default function Dashboard() {
             <div style={{ marginBottom: 12 }}>
               <button
                 className="btn"
-                onClick={() => window.open(`/api/export/signals?format=csv`, '_blank')}
+                onClick={async () => {
+                  try {
+                    await api.exportSignals('csv');
+                  } catch (e: any) {
+                    setToast({ message: `Export failed: ${e.message}`, type: 'error' });
+                  }
+                }}
                 style={{ fontSize: 12, padding: "4px 12px" }}
               >
                 Export CSV
@@ -1720,7 +1726,13 @@ export default function Dashboard() {
             <div style={{ marginBottom: 12 }}>
               <button
                 className="btn"
-                onClick={() => window.open(`/api/export/trades?format=csv`, '_blank')}
+                onClick={async () => {
+                  try {
+                    await api.exportTrades('csv');
+                  } catch (e: any) {
+                    setToast({ message: `Export failed: ${e.message}`, type: 'error' });
+                  }
+                }}
                 style={{ fontSize: 12, padding: "4px 12px" }}
               >
                 Export CSV

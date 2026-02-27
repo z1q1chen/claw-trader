@@ -218,6 +218,49 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ cooldown_s }),
     }),
+
+  // Export helpers with auth headers
+  exportSignals: async (format: string = "csv") => {
+    const res = await fetch(`${API_BASE}/export/signals?format=${format}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `signals.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  exportTrades: async (format: string = "csv") => {
+    const res = await fetch(`${API_BASE}/export/trades?format=${format}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `trades.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  exportDecisions: async (format: string = "csv") => {
+    const res = await fetch(`${API_BASE}/export/decisions?format=${format}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `decisions.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export function createWebSocket(

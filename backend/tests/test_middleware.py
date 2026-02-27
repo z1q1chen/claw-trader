@@ -137,33 +137,39 @@ async def test_rate_limit_non_sensitive_path_normal_limit():
 
 @pytest.mark.asyncio
 async def test_rate_limit_x_forwarded_for_support():
-    """Test that X-Forwarded-For header is respected for proxied requests."""
-    app = MagicMock()
-    middleware = RateLimitMiddleware(app, requests_per_minute=2)
-    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    """Test that X-Forwarded-For header is respected when trust_proxy_headers is enabled."""
+    from app.core.config import settings
+    original = settings.trust_proxy_headers
+    settings.trust_proxy_headers = True
+    try:
+        app = MagicMock()
+        middleware = RateLimitMiddleware(app, requests_per_minute=2)
+        call_next = AsyncMock(return_value=MagicMock(status_code=200))
 
-    # Create request with X-Forwarded-For header
-    request = MagicMock()
-    request.url.path = "/api/test"
-    request.client.host = "127.0.0.1"
-    request.headers.get = MagicMock(return_value="192.168.1.100, 10.0.0.1")
+        # Create request with X-Forwarded-For header
+        request = MagicMock()
+        request.url.path = "/api/test"
+        request.client.host = "127.0.0.1"
+        request.headers.get = MagicMock(return_value="192.168.1.100, 10.0.0.1")
 
-    # First two requests should succeed
-    await middleware.dispatch(request, call_next)
-    await middleware.dispatch(request, call_next)
+        # First two requests should succeed
+        await middleware.dispatch(request, call_next)
+        await middleware.dispatch(request, call_next)
 
-    # Third request should be blocked (rate limit hit)
-    response = await middleware.dispatch(request, call_next)
-    assert response.status_code == 429
+        # Third request should be blocked (rate limit hit)
+        response = await middleware.dispatch(request, call_next)
+        assert response.status_code == 429
 
-    # Different X-Forwarded-For IP should have separate limit
-    request2 = MagicMock()
-    request2.url.path = "/api/test"
-    request2.client.host = "127.0.0.1"
-    request2.headers.get = MagicMock(return_value="192.168.1.200, 10.0.0.2")
+        # Different X-Forwarded-For IP should have separate limit
+        request2 = MagicMock()
+        request2.url.path = "/api/test"
+        request2.client.host = "127.0.0.1"
+        request2.headers.get = MagicMock(return_value="192.168.1.200, 10.0.0.2")
 
-    response = await middleware.dispatch(request2, call_next)
-    assert response.status_code == 200
+        response = await middleware.dispatch(request2, call_next)
+        assert response.status_code == 200
+    finally:
+        settings.trust_proxy_headers = original
 
 
 @pytest.mark.asyncio

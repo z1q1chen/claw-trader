@@ -32,14 +32,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._request_counts: dict[str, list[float]] = defaultdict(list)
 
     async def dispatch(self, request: Request, call_next):
+        from app.core.config import settings
+
         # Skip rate limiting for WebSocket and health
         if request.url.path in ("/ws", "/api/health"):
             return await call_next(request)
 
-        # Respect X-Forwarded-For for proxied requests
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
+        # Only honor X-Forwarded-For if trust_proxy_headers is explicitly enabled
+        if settings.trust_proxy_headers:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                client_ip = forwarded.split(",")[0].strip()
+            else:
+                client_ip = request.client.host if request.client else "unknown"
         else:
             client_ip = request.client.host if request.client else "unknown"
         now = time.monotonic()

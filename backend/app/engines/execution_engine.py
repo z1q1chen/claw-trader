@@ -189,8 +189,9 @@ class ExecutionEngine:
             )
 
             if result.success:
+                order_status = "pending" if result.filled_price is None else "filled"
                 await update_order_status(
-                    order_id, "filled",
+                    order_id, order_status,
                     broker_order_id=result.broker_order_id,
                     filled_price=result.filled_price,
                     filled_quantity=result.filled_quantity,

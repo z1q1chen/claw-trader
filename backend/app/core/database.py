@@ -62,6 +62,34 @@ MIGRATIONS = [
     )
 """),
     (5, "Add max_position_concentration_pct to risk_config", "ALTER TABLE risk_config ADD COLUMN max_position_concentration_pct REAL DEFAULT 20.0"),
+    (6, "Add signal_config table", """
+    CREATE TABLE IF NOT EXISTS signal_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rsi_period INTEGER NOT NULL DEFAULT 14,
+        rsi_oversold REAL NOT NULL DEFAULT 30,
+        rsi_overbought REAL NOT NULL DEFAULT 70,
+        macd_fast INTEGER NOT NULL DEFAULT 12,
+        macd_slow INTEGER NOT NULL DEFAULT 26,
+        macd_signal INTEGER NOT NULL DEFAULT 9,
+        volume_spike_ratio REAL NOT NULL DEFAULT 2.0,
+        bb_period INTEGER NOT NULL DEFAULT 20,
+        bb_std_dev REAL NOT NULL DEFAULT 2.0,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+"""),
+    (7, "Add position_sizing_config table", """
+    CREATE TABLE IF NOT EXISTS position_sizing_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        method TEXT NOT NULL DEFAULT 'fixed',
+        fixed_quantity REAL NOT NULL DEFAULT 1.0,
+        portfolio_fraction REAL NOT NULL DEFAULT 0.02,
+        kelly_win_rate REAL NOT NULL DEFAULT 0.55,
+        kelly_avg_win REAL NOT NULL DEFAULT 1.5,
+        kelly_avg_loss REAL NOT NULL DEFAULT 1.0,
+        max_position_pct REAL NOT NULL DEFAULT 0.1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+"""),
 ]
 
 
@@ -417,6 +445,76 @@ async def load_risk_config() -> dict | None:
         return dict(row) if row else None
 
 
+async def save_signal_config(config_dict: dict) -> None:
+    async with _write_lock:
+        async with aiosqlite.connect(DB_PATH) as db:
+            try:
+                await db.execute("BEGIN")
+                await db.execute("DELETE FROM signal_config")
+                await db.execute(
+                    """INSERT INTO signal_config
+                       (rsi_period, rsi_oversold, rsi_overbought, macd_fast, macd_slow, macd_signal,
+                        volume_spike_ratio, bb_period, bb_std_dev)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (config_dict.get("rsi_period", 14),
+                     config_dict.get("rsi_oversold", 30),
+                     config_dict.get("rsi_overbought", 70),
+                     config_dict.get("macd_fast", 12),
+                     config_dict.get("macd_slow", 26),
+                     config_dict.get("macd_signal", 9),
+                     config_dict.get("volume_spike_ratio", 2.0),
+                     config_dict.get("bb_period", 20),
+                     config_dict.get("bb_std_dev", 2.0)),
+                )
+                await db.execute("COMMIT")
+            except Exception as e:
+                await db.execute("ROLLBACK")
+                logger.error(f"Failed to save signal config: {e}")
+                raise
+
+
+async def load_signal_config() -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM signal_config ORDER BY id DESC LIMIT 1")
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def save_position_sizing_config(config_dict: dict) -> None:
+    async with _write_lock:
+        async with aiosqlite.connect(DB_PATH) as db:
+            try:
+                await db.execute("BEGIN")
+                await db.execute("DELETE FROM position_sizing_config")
+                await db.execute(
+                    """INSERT INTO position_sizing_config
+                       (method, fixed_quantity, portfolio_fraction, kelly_win_rate, kelly_avg_win,
+                        kelly_avg_loss, max_position_pct)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (config_dict.get("method", "fixed"),
+                     config_dict.get("fixed_quantity", 1.0),
+                     config_dict.get("portfolio_fraction", 0.02),
+                     config_dict.get("kelly_win_rate", 0.55),
+                     config_dict.get("kelly_avg_win", 1.5),
+                     config_dict.get("kelly_avg_loss", 1.0),
+                     config_dict.get("max_position_pct", 0.1)),
+                )
+                await db.execute("COMMIT")
+            except Exception as e:
+                await db.execute("ROLLBACK")
+                logger.error(f"Failed to save position sizing config: {e}")
+                raise
+
+
+async def load_position_sizing_config() -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM position_sizing_config ORDER BY id DESC LIMIT 1")
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def prune_old_records(days: int = 30) -> dict[str, int]:
     """Delete records older than the specified number of days."""
     counts = {}
@@ -633,3 +731,82 @@ async def count_journal_entries(symbol: str | None = None) -> int:
         else:
             row = await (await db.execute("SELECT COUNT(*) FROM trade_journal")).fetchone()
         return row[0]
+
+
+async def get_recent_trade_stats(lookback_days: int = 30) -> dict | None:
+    """Get recent trade statistics for live Kelly parameter updates.
+
+    Returns dict with: total_trades, win_rate, avg_win, avg_loss
+    Returns None if no completed trades found.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Get filled buy/sell pairs from the last N days
+        cursor = await db.execute(
+            """
+            SELECT o.* FROM orders o
+            WHERE o.status = 'filled'
+            AND o.created_at >= datetime('now', ?)
+            ORDER BY o.created_at ASC
+            """,
+            (f'-{lookback_days} days',)
+        )
+        orders = [dict(row) for row in await cursor.fetchall()]
+
+        if not orders:
+            return None
+
+        # Match buy/sell pairs FIFO for P&L calculation
+        buys = [o for o in orders if o['side'].upper() == 'BUY']
+        sells = [o for o in orders if o['side'].upper() == 'SELL']
+
+        wins = []
+        losses = []
+        matched_trades = 0
+
+        # Match pairs FIFO
+        for sell in sells:
+            remaining_qty = sell.get('filled_quantity', 0)
+            if not buys or remaining_qty <= 0:
+                continue
+
+            buy = buys[0]
+            buy_qty = buy.get('filled_quantity', 0)
+            buy_price = buy.get('filled_price', 0)
+            sell_price = sell.get('filled_price', 0)
+
+            if buy_qty <= 0 or buy_price <= 0 or sell_price <= 0:
+                continue
+
+            # Match as much as possible from first buy
+            match_qty = min(buy_qty, remaining_qty)
+            pnl = (sell_price - buy_price) * match_qty
+
+            if pnl > 0:
+                wins.append(pnl)
+            elif pnl < 0:
+                losses.append(abs(pnl))
+
+            matched_trades += 1
+
+            # Remove buy if fully consumed
+            if match_qty >= buy_qty:
+                buys.pop(0)
+
+        if not wins and not losses:
+            return None
+
+        total_trades = len(orders)
+        winning_trades = len(wins)
+        losing_trades = len(losses)
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
+        avg_win = sum(wins) / len(wins) if wins else 0
+        avg_loss = sum(losses) / len(losses) if losses else 0
+
+        return {
+            "total_trades": total_trades,
+            "win_rate": win_rate,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+        }

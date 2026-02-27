@@ -127,6 +127,10 @@ class DryRunBrokerAdapter(BrokerAdapter):
             "timestamp": time.time(),
         })
 
+        MAX_ORDER_HISTORY = 5000
+        if len(self._order_history) > MAX_ORDER_HISTORY:
+            self._order_history = self._order_history[-MAX_ORDER_HISTORY:]
+
         logger.info(f"[DRY RUN] {side} {quantity} {symbol} @ {filled_price:.4f} (order {order_id})")
         self.save_state()
 

@@ -19,6 +19,8 @@ from app.core.config import settings
 from app.core.database import (
     DB_PATH,
     save_risk_config,
+    save_signal_config,
+    save_position_sizing_config,
     get_latest_timestamps,
     count_orders,
     count_trade_decisions,
@@ -838,6 +840,19 @@ async def update_signal_config(req: dict):
 
     if errors:
         return JSONResponse(status_code=400, content={"errors": errors})
+
+    config_dict = {
+        "rsi_period": cfg.rsi_period,
+        "rsi_oversold": cfg.rsi_oversold,
+        "rsi_overbought": cfg.rsi_overbought,
+        "macd_fast": cfg.macd_fast,
+        "macd_slow": cfg.macd_slow,
+        "macd_signal": cfg.macd_signal,
+        "volume_spike_ratio": cfg.volume_spike_ratio,
+        "bb_period": cfg.bb_period,
+        "bb_std_dev": cfg.bb_std_dev,
+    }
+    await save_signal_config(config_dict)
     return {"status": "ok"}
 
 
@@ -929,6 +944,16 @@ async def update_position_sizing_config(req: dict):
     if errors:
         raise HTTPException(status_code=422, detail=errors)
 
+    config_dict = {
+        "method": cfg.method,
+        "fixed_quantity": cfg.fixed_quantity,
+        "portfolio_fraction": cfg.portfolio_fraction,
+        "kelly_win_rate": cfg.kelly_win_rate,
+        "kelly_avg_win": cfg.kelly_avg_win,
+        "kelly_avg_loss": cfg.kelly_avg_loss,
+        "max_position_pct": cfg.max_position_pct,
+    }
+    await save_position_sizing_config(config_dict)
     return {"status": "ok"}
 
 

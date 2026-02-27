@@ -28,8 +28,9 @@ class PolymarketPriceFeed(PriceFeed):
         age = time.time() - self._last_data_time
         return age > max_age_seconds
 
-    async def _fetch_with_backoff(self) -> dict[str, tuple[float, float]]:
+    async def _fetch_with_backoff(self, max_retries: int = 10) -> dict[str, tuple[float, float]]:
         """Fetch prices with exponential backoff on connection failure."""
+        retry_count = 0
         while True:
             try:
                 if self._http is None:
@@ -67,10 +68,17 @@ class PolymarketPriceFeed(PriceFeed):
                 if result:
                     self._last_data_time = time.time()
                     self._backoff_seconds = 1.0
+                    retry_count = 0
                     return result
                 else:
                     # No data retrieved, apply backoff
-                    logger.debug(f"No price data retrieved, backing off {self._backoff_seconds}s")
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logger.error(f"Max retries ({max_retries}) exceeded for Polymarket feed with empty data, returning empty dict")
+                        self._backoff_seconds = 1.0
+                        retry_count = 0
+                        return {}
+                    logger.debug(f"No price data retrieved, backing off {self._backoff_seconds}s (retry {retry_count}/{max_retries})")
                     await asyncio.sleep(self._backoff_seconds)
                     self._backoff_seconds = min(self._backoff_seconds * 2, self._max_backoff_seconds)
                     continue
@@ -84,6 +92,7 @@ class PolymarketPriceFeed(PriceFeed):
                     except Exception:
                         pass
                 self._http = None
+                retry_count = 0
 
     async def get_latest_prices(self) -> dict[str, tuple[float, float]]:
         """Get latest prices with reconnection support."""

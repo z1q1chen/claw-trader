@@ -56,6 +56,7 @@ class Settings(BaseSettings):
 
     # Rate limiting
     rate_limit_rpm: int = 120  # requests per minute per IP
+    trust_proxy_headers: bool = False  # Only honor X-Forwarded-For when explicitly enabled
 
     # Dry-run mode
     dry_run_mode: bool = True  # Default to dry-run for safety
