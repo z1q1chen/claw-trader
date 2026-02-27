@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 import sys
 
+from app.core.config import settings
 
-def setup_logging(level: str = "INFO") -> logging.Logger:
+
+def setup_logging(level: str | None = None) -> logging.Logger:
+    log_level = level or ("DEBUG" if settings.debug else "INFO")
     logger = logging.getLogger("claw_trader")
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)

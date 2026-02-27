@@ -410,6 +410,17 @@ async def search_markets(q: str, limit: int = 10):
     return markets
 
 
+# --- Maintenance ---
+
+@router.post("/api/maintenance/prune")
+async def prune_old_data(days: int = 30):
+    from app.core.database import prune_old_records
+    if days < 1:
+        raise HTTPException(status_code=422, detail="days must be >= 1")
+    counts = await prune_old_records(days)
+    return {"status": "ok", "pruned": counts}
+
+
 # --- System ---
 
 @router.get("/api/health")

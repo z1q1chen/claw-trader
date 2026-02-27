@@ -170,3 +170,44 @@ async def test_upsert_position_update(temp_db):
     assert len(rows) == 1
     assert dict(rows[0])["quantity"] == 200.0
     assert dict(rows[0])["realized_pnl"] == 200.0
+
+
+@pytest.mark.asyncio
+async def test_save_and_load_risk_config(temp_db):
+    from app.core.database import save_risk_config, load_risk_config
+    await save_risk_config(15000, 7500, 75000, 3000, 15.0)
+    loaded = await load_risk_config()
+    assert loaded is not None
+    assert loaded["max_position_usd"] == 15000
+    assert loaded["max_daily_loss_usd"] == 7500
+    assert loaded["max_portfolio_exposure_usd"] == 75000
+    assert loaded["max_single_trade_usd"] == 3000
+    assert loaded["max_drawdown_pct"] == 15.0
+
+
+@pytest.mark.asyncio
+async def test_save_risk_config_overwrites(temp_db):
+    from app.core.database import save_risk_config, load_risk_config
+    await save_risk_config(10000, 5000, 50000, 2000, 10.0)
+    await save_risk_config(20000, 10000, 100000, 4000, 20.0)
+    loaded = await load_risk_config()
+    assert loaded["max_position_usd"] == 20000
+    assert loaded["max_single_trade_usd"] == 4000
+
+
+@pytest.mark.asyncio
+async def test_load_risk_config_empty(temp_db):
+    from app.core.database import load_risk_config
+    loaded = await load_risk_config()
+    assert loaded is None
+
+
+@pytest.mark.asyncio
+async def test_prune_old_records(temp_db):
+    from app.core.database import prune_old_records, log_signal
+    # Insert a recent signal
+    await log_signal("AAPL", "rsi_oversold", 25.0, {"threshold": 30})
+    # Pruning with 0 days would delete everything, but let's use 30 days
+    # The record was just created, so it won't be pruned
+    counts = await prune_old_records(30)
+    assert counts["signals"] == 0  # nothing old to prune

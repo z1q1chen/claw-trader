@@ -9,6 +9,7 @@ import {
   RiskConfig,
   Signal,
   BrokersResponse,
+  PolymarketMarket,
 } from "./types";
 
 const API_BASE = "/api";
@@ -98,9 +99,9 @@ export const api = {
 
   // Markets (Polymarket)
   getTrendingMarkets: (limit = 10) =>
-    fetchJSON<any[]>(`/markets/trending?limit=${limit}`),
+    fetchJSON<PolymarketMarket[]>(`/markets/trending?limit=${limit}`),
   searchMarkets: (query: string, limit = 10) =>
-    fetchJSON<any[]>(`/markets/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+    fetchJSON<PolymarketMarket[]>(`/markets/search?q=${encodeURIComponent(query)}&limit=${limit}`),
 
   // Risk History
   getRiskHistory: (limit = 100) =>
@@ -108,11 +109,11 @@ export const api = {
 
   // Broker Orders
   getBrokerOrders: (broker: string, limit = 50) =>
-    fetchJSON<any[]>(`/orders/broker/${broker}?limit=${limit}`),
+    fetchJSON<Order[]>(`/orders/broker/${broker}?limit=${limit}`),
 };
 
 export function createWebSocket(
-  onMessage: (event: any) => void
+  onMessage: (event: { type: string; data: Record<string, unknown>; timestamp: string }) => void
 ): { close: () => void } {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = `${protocol}//${window.location.host}/ws`;

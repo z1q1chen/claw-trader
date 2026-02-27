@@ -50,6 +50,7 @@ export interface Order {
   symbol: string;
   side: string;
   order_type: string;
+  limit_price: number | null;
   quantity: number;
   filled_price: number | null;
   filled_quantity: number | null;

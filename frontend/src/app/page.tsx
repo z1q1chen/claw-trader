@@ -12,6 +12,7 @@ import type {
   RiskConfig,
   Signal,
   BrokersResponse,
+  PolymarketMarket,
 } from "@/lib/types";
 
 interface EventLogEntry {
@@ -56,7 +57,7 @@ export default function Dashboard() {
   const [llmStatus, setLlmStatus] = useState<string | null>(null);
   const [riskStatus, setRiskStatus] = useState<string | null>(null);
   const [marketSearch, setMarketSearch] = useState("");
-  const [markets, setMarkets] = useState<any[]>([]);
+  const [markets, setMarkets] = useState<PolymarketMarket[]>([]);
   const [marketsLoading, setMarketsLoading] = useState(false);
   const [tradeForm, setTradeForm] = useState({
     symbol: "",
@@ -377,6 +378,17 @@ export default function Dashboard() {
         {/* Risk Configuration */}
         <div className="card">
           <h2>Risk Limits</h2>
+          <div className="form-row">
+            <label>Max Position ($)</label>
+            <input
+              className="input"
+              type="number"
+              value={riskConfig.max_position_usd || ""}
+              onChange={(e) =>
+                setRiskConfig({ ...riskConfig, max_position_usd: parseFloat(e.target.value) || 0 })
+              }
+            />
+          </div>
           <div className="form-row">
             <label>Max Single Trade ($)</label>
             <input
@@ -745,6 +757,7 @@ export default function Dashboard() {
                   <th>Symbol</th>
                   <th>Side</th>
                   <th>Type</th>
+                  <th>Limit</th>
                   <th>Qty</th>
                   <th>Filled Price</th>
                   <th>Status</th>
@@ -760,6 +773,7 @@ export default function Dashboard() {
                       <span className={`badge badge-${o.side}`}>{o.side}</span>
                     </td>
                     <td>{o.order_type}</td>
+                    <td>{o.limit_price ? `$${o.limit_price.toFixed(2)}` : "-"}</td>
                     <td>{o.quantity}</td>
                     <td>{o.filled_price ? `$${o.filled_price.toFixed(2)}` : "-"}</td>
                     <td>{o.status}</td>

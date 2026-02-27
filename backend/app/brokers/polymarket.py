@@ -250,9 +250,30 @@ class PolymarketAdapter(BrokerAdapter):
             return 0.0
 
     async def get_order_history(self, limit: int = 50) -> list[dict[str, Any]]:
-        # TODO: Query CLOB API for order history
-        return []
+        if not self._api_key:
+            return []
+        try:
+            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+            response = await self._http.get(
+                f"{CLOB_API_BASE}/orders",
+                headers=headers,
+                params={"limit": limit},
+            )
+            if response.status_code == 200:
+                return response.json() if isinstance(response.json(), list) else []
+            return []
+        except Exception:
+            return []
 
     async def cancel_order(self, order_id: str) -> bool:
-        # TODO: Cancel via CLOB API
-        return False
+        if not self._api_key:
+            return False
+        try:
+            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+            response = await self._http.delete(
+                f"{CLOB_API_BASE}/order/{order_id}",
+                headers=headers,
+            )
+            return response.status_code in (200, 204)
+        except Exception:
+            return False
