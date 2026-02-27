@@ -174,6 +174,8 @@ def _validate_webhook_url(url: str) -> list[str]:
 
 @router.get("/api/llm/config")
 async def get_llm_config():
+    from app.core.database import _xor_decrypt, _get_encryption_key
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -182,7 +184,14 @@ async def get_llm_config():
         row = await cursor.fetchone()
         if row:
             config = dict(row)
-            config["api_key"] = _mask_key(config.get("api_key", ""))
+            # Decrypt the api_key before masking
+            encrypted_key = config.get("api_key", "")
+            try:
+                decrypted_key = _xor_decrypt(encrypted_key, _get_encryption_key())
+                config["api_key"] = _mask_key(decrypted_key)
+            except Exception:
+                # Backwards compatibility: if decryption fails, mask the raw value
+                config["api_key"] = _mask_key(encrypted_key)
             return config
         return {"provider": "gemini", "model_name": "gemini-2.0-flash", "api_key": "", "base_url": "", "is_active": True}
 

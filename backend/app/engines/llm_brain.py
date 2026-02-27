@@ -410,6 +410,7 @@ class LLMBrain:
             quantity = float(decision.get("quantity", 0))
             confidence = float(decision.get("confidence", 0))
             symbol = decision.get("symbol", "").strip()
+            action = decision.get("action", "").lower()
 
             if quantity <= 0:
                 logger.warning(f"LLM output validation failed: quantity must be > 0, got {quantity}")
@@ -429,12 +430,18 @@ class LLMBrain:
                 self._last_call_error = "Invalid symbol: empty"
                 return None
 
+            if action not in ("buy", "sell"):
+                logger.warning(f"LLM output validation failed: action must be 'buy' or 'sell', got {action}")
+                self._last_call_success = False
+                self._last_call_error = f"Invalid action: {action}"
+                return None
+
             self._last_call_success = True
             self._last_call_error = None
 
             return TradeAction(
                 symbol=symbol,
-                side=decision["action"],
+                side=action,
                 quantity=quantity,
                 reasoning=decision.get("reasoning", ""),
                 confidence=confidence,

@@ -74,7 +74,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if len(self._request_counts) > 10000:
             self._request_counts = {
                 ip: timestamps for ip, timestamps in self._request_counts.items()
-                if timestamps
+                if timestamps and any(now - t < self.window_seconds for t in timestamps)
             }
 
         return response

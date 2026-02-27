@@ -89,73 +89,74 @@ class RiskEngine:
                 )
 
     def check_trade(self, action: TradeAction, current_price: float) -> RiskCheckResult:
-        if self._kill_switch:
+        with self._reset_lock:
+            if self._kill_switch:
+                return RiskCheckResult(
+                    passed=False,
+                    rejection_reason="Kill switch is active. All trading halted.",
+                )
+
+            trade_value = action.quantity * current_price
+            adjusted_quantity = None
+
+            # Adjust quantity if exceeding single trade limit
+            if trade_value > settings.max_single_trade_usd:
+                adjusted_quantity = settings.max_single_trade_usd / current_price
+                trade_value = settings.max_single_trade_usd
+
+            # Determine exposure change based on side
+            if action.side.upper() == "SELL":
+                exposure_delta = -trade_value
+            else:
+                exposure_delta = trade_value
+
+            # Check position concentration
+            current_symbol_exposure = abs(self._portfolio.positions.get(action.symbol, 0))
+            new_symbol_exposure = max(0, current_symbol_exposure + exposure_delta)
+            max_per_position = settings.max_portfolio_exposure_usd * (settings.max_position_concentration_pct / 100.0)
+            if new_symbol_exposure > max_per_position:
+                return RiskCheckResult(
+                    passed=False,
+                    rejection_reason=f"Position in {action.symbol} would reach ${new_symbol_exposure:.0f}, exceeding {settings.max_position_concentration_pct}% concentration limit of ${max_per_position:.0f}",
+                )
+
+            # Check total portfolio exposure
+            new_total_exposure = max(0, self._portfolio.total_exposure_usd + exposure_delta)
+            if new_total_exposure > settings.max_portfolio_exposure_usd:
+                return RiskCheckResult(
+                    passed=False,
+                    rejection_reason=f"Total exposure would reach ${new_total_exposure:.0f}, exceeding limit of ${settings.max_portfolio_exposure_usd:.0f}",
+                )
+
+            # Check daily loss limit
+            if self._portfolio.daily_pnl_usd < -settings.max_daily_loss_usd:
+                self.activate_kill_switch(
+                    f"Daily loss ${abs(self._portfolio.daily_pnl_usd):.0f} exceeds limit ${settings.max_daily_loss_usd:.0f}"
+                )
+                return RiskCheckResult(
+                    passed=False,
+                    rejection_reason="Daily loss limit breached. Kill switch activated.",
+                )
+
+            # Check max drawdown
+            if self._portfolio.max_drawdown_pct > settings.max_drawdown_pct:
+                self.activate_kill_switch(
+                    f"Max drawdown {self._portfolio.max_drawdown_pct:.1f}% exceeds limit {settings.max_drawdown_pct}%"
+                )
+                return RiskCheckResult(
+                    passed=False,
+                    rejection_reason="Max drawdown limit breached. Kill switch activated.",
+                )
+
+            var_95 = self._calculate_var()
+
             return RiskCheckResult(
-                passed=False,
-                rejection_reason="Kill switch is active. All trading halted.",
+                passed=True,
+                adjusted_quantity=adjusted_quantity,
+                exposure_after=new_total_exposure,
+                var_95=var_95,
+                rejection_reason=f"Trade size adjusted to {adjusted_quantity:.2f} shares." if adjusted_quantity else None,
             )
-
-        trade_value = action.quantity * current_price
-        adjusted_quantity = None
-
-        # Adjust quantity if exceeding single trade limit
-        if trade_value > settings.max_single_trade_usd:
-            adjusted_quantity = settings.max_single_trade_usd / current_price
-            trade_value = settings.max_single_trade_usd
-
-        # Determine exposure change based on side
-        if action.side.upper() == "SELL":
-            exposure_delta = -trade_value
-        else:
-            exposure_delta = trade_value
-
-        # Check position concentration
-        current_symbol_exposure = abs(self._portfolio.positions.get(action.symbol, 0))
-        new_symbol_exposure = max(0, current_symbol_exposure + exposure_delta)
-        max_per_position = settings.max_portfolio_exposure_usd * (settings.max_position_concentration_pct / 100.0)
-        if new_symbol_exposure > max_per_position:
-            return RiskCheckResult(
-                passed=False,
-                rejection_reason=f"Position in {action.symbol} would reach ${new_symbol_exposure:.0f}, exceeding {settings.max_position_concentration_pct}% concentration limit of ${max_per_position:.0f}",
-            )
-
-        # Check total portfolio exposure
-        new_total_exposure = max(0, self._portfolio.total_exposure_usd + exposure_delta)
-        if new_total_exposure > settings.max_portfolio_exposure_usd:
-            return RiskCheckResult(
-                passed=False,
-                rejection_reason=f"Total exposure would reach ${new_total_exposure:.0f}, exceeding limit of ${settings.max_portfolio_exposure_usd:.0f}",
-            )
-
-        # Check daily loss limit
-        if self._portfolio.daily_pnl_usd < -settings.max_daily_loss_usd:
-            self.activate_kill_switch(
-                f"Daily loss ${abs(self._portfolio.daily_pnl_usd):.0f} exceeds limit ${settings.max_daily_loss_usd:.0f}"
-            )
-            return RiskCheckResult(
-                passed=False,
-                rejection_reason="Daily loss limit breached. Kill switch activated.",
-            )
-
-        # Check max drawdown
-        if self._portfolio.max_drawdown_pct > settings.max_drawdown_pct:
-            self.activate_kill_switch(
-                f"Max drawdown {self._portfolio.max_drawdown_pct:.1f}% exceeds limit {settings.max_drawdown_pct}%"
-            )
-            return RiskCheckResult(
-                passed=False,
-                rejection_reason="Max drawdown limit breached. Kill switch activated.",
-            )
-
-        var_95 = self._calculate_var()
-
-        return RiskCheckResult(
-            passed=True,
-            adjusted_quantity=adjusted_quantity,
-            exposure_after=new_total_exposure,
-            var_95=var_95,
-            rejection_reason=f"Trade size adjusted to {adjusted_quantity:.2f} shares." if adjusted_quantity else None,
-        )
 
     def _calculate_var(self, confidence: float = 0.95) -> float:
         if len(self._return_history) < 10:
